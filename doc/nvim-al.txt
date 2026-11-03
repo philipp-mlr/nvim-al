@@ -97,6 +97,8 @@ workspace file's "launch" section (or the launch hook).
 :AL compile[!]      Compile every project of the workspace with altool, using
                     the workspace-level analyzers and ruleset. Errors and
                     warnings land in quickfix. With ! the build log opens.
+                    Like any AL build, this regenerates *.g.xlf translation
+                    files of apps with the TranslationFile feature.
 :AL publish         Build, then publish the .app to the target.
 :AL symbols         Download symbols from the target.
 :AL symbols global  Download symbols from Microsoft's NuGet feeds.
