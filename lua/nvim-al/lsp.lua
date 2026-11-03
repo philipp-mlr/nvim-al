@@ -318,7 +318,7 @@ local function patch_definition(client)
         -- right after opening, which fails on a still-empty buffer
         return definition.preload(loc.uri, function()
           h(err, loc, ctx, config)
-        end)
+        end, self.id)
       end
       return h(err, loc, ctx, config)
     end, bufnr)
@@ -496,6 +496,57 @@ function M.restart_buffer(bufnr)
   M.attach(bufnr)
 end
 
+--- Tell the server about folders added to or removed from the workspace file
+--- (al/didChangeWorkspaceFolders, then al/loadManifest for new folders).
+local function sync_folders(client, old, fresh)
+  local before, after = {}, {}
+  for _, f in ipairs(old.folders) do
+    before[f.path] = f
+  end
+  for _, f in ipairs(fresh.folders) do
+    after[f.path] = f
+  end
+  local added, removed = {}, {}
+  for _, f in ipairs(fresh.folders) do
+    if not before[f.path] then
+      added[#added + 1] = f
+    end
+  end
+  for _, f in ipairs(old.folders) do
+    if not after[f.path] then
+      removed[#removed + 1] = f
+    end
+  end
+  if #added == 0 and #removed == 0 then
+    return
+  end
+  local function objs(list)
+    return vim.tbl_map(folder_object, list)
+  end
+  client:request(
+    "al/didChangeWorkspaceFolders",
+    { added = objs(added), removed = objs(removed) },
+    function() end
+  )
+  for _, f in ipairs(added) do
+    if f.manifest then
+      client:request(
+        "al/loadManifest",
+        { projectFolder = f.path, manifest = f.manifest.raw },
+        function() end
+      )
+    end
+  end
+  for _, f in ipairs(removed) do
+    for b in pairs(client.attached_buffers) do
+      local name = vim.api.nvim_buf_get_name(b)
+      if util.is_inside(name, f.path) then
+        vim.diagnostic.reset(nil, b)
+      end
+    end
+  end
+end
+
 --- React to saved project files (app.json, workspace file, .vscode/settings.json).
 ---@param path string
 function M.on_project_file_written(path)
@@ -508,6 +559,7 @@ function M.on_project_file_written(path)
         workspace_file = cfg().hooks.workspace_file,
       })
       if fresh and fresh.key == st.ws.key then
+        sync_folders(client, st.ws, fresh)
         st.ws = fresh
         if vim.fs.basename(path) == "app.json" then
           local f = workspace.folder_for(fresh, path)

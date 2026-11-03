@@ -81,6 +81,14 @@ require("nvim-al").setup({
 
 See `:help nvim-al-hooks`.
 
+## Credentials
+
+`UserPassword` credentials come from `BC_SERVER_USERNAME`/`BC_SERVER_PASSWORD`
+or are asked once per server and kept in memory. They are never written to
+disk by nvim-al and never sent to the language server. One caveat: with
+nvim-dap's log level at DEBUG or TRACE, nvim-dap logs the adapter environment,
+password included, to `dap.log`. The default level does not.
+
 ## Scope
 
 v1 supports on-prem and Docker environments (`UserPassword`, `Windows`

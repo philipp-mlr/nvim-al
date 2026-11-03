@@ -29,6 +29,7 @@ session to attach to.
    - [ ] step over moves to the next line
    - [ ] continue lets the call finish (HTTP 200)
 6. `:lua require("dap").terminate()` and check that no `startDebugging` process remains.
+7. Quit Neovim during a running session and check again (`:AL` kills adapters on exit).
 
 ## Launch (publish and debug)
 

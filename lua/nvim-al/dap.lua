@@ -11,9 +11,6 @@ local M = {}
 local KEY = "nvim-al"
 local done = false
 
----@type table<integer, boolean> adapter process ids started by nvim-al
-local pids = {}
-
 local function cfg()
   return require("nvim-al").config()
 end
@@ -247,14 +244,6 @@ function M.setup()
     end
   end
 
-  -- track adapter processes so none outlives Neovim
-  dap.listeners.after.initialize[KEY] = function(session)
-    local pid = session and session.adapter and session.adapter.pid
-      or (session and session.handle and session.handle.pid)
-    if pid then
-      pids[pid] = true
-    end
-  end
   vim.api.nvim_create_autocmd("VimLeavePre", {
     group = vim.api.nvim_create_augroup("nvim-al-dap", { clear = true }),
     callback = M.kill_adapters,
@@ -262,19 +251,53 @@ function M.setup()
   return true
 end
 
---- Kill every adapter process nvim-al started.
+--- PIDs of AL debug adapters started from this Neovim. nvim-dap keeps the
+--- adapter pid private, so find them among Neovim's child processes by their
+--- command line (EditorServices.Host … /startDebugging).
+---@return integer[]
+function M._adapter_pids()
+  local out = {}
+  local function walk(pid)
+    for _, child in ipairs(vim.api.nvim_get_proc_children(pid)) do
+      local ok, info = pcall(vim.api.nvim_get_proc, child)
+      local cmd = ok and info and info.name or ""
+      local args = ""
+      local f = io.open("/proc/" .. child .. "/cmdline", "rb")
+      if f then
+        args = f:read("*a"):gsub("%z", " ")
+        f:close()
+      end
+      local line = cmd .. " " .. args
+      if line:find("EditorServices.Host", 1, true) and line:find("/startDebugging", 1, true) then
+        out[#out + 1] = child
+      else
+        walk(child)
+      end
+    end
+  end
+  walk(vim.fn.getpid())
+  return out
+end
+
+--- Kill every AL debug adapter started from this Neovim (VimLeavePre).
 function M.kill_adapters()
-  for pid in pairs(pids) do
+  local list = M._adapter_pids()
+  for _, pid in ipairs(list) do
     pcall(vim.uv.kill, pid, "sigterm")
   end
-  local list = vim.tbl_keys(pids)
-  pids = {}
   if #list > 0 then
-    vim.defer_fn(function()
+    -- VimLeavePre: no event loop left for a deferred SIGKILL; wait briefly instead
+    vim.wait(1000, function()
       for _, pid in ipairs(list) do
-        pcall(vim.uv.kill, pid, "sigkill")
+        if vim.uv.kill(pid, 0) == 0 then
+          return false
+        end
       end
-    end, 1000)
+      return true
+    end, 50)
+    for _, pid in ipairs(list) do
+      pcall(vim.uv.kill, pid, "sigkill")
+    end
   end
 end
 

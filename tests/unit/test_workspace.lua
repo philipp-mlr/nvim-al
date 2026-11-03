@@ -122,6 +122,41 @@ T["tie at same depth: alphabetical plus one notice"] = function()
   eq(#notes, 1)
 end
 
+T["minor: a sibling resolves to its own outermost workspace, not the one opened first"] = function()
+  local multi = H.fixture("multi")
+  -- inner workspace lists A/app only; the outer one lists A/app and A/test
+  vim.fn.writefile({ '{ "folders": [ { "path": "app" } ] }' }, multi .. "/apps/A/A.code-workspace")
+  vim.fn.writefile(
+    { '{ "folders": [ { "path": "apps/A/test" }, { "path": "apps/B/app" } ] }' },
+    multi .. "/all.code-workspace"
+  )
+  -- open A/app first: only A.code-workspace lists it
+  local wa = ws_mod().resolve(multi .. "/apps/A/app/src/A_app.Codeunit.al")
+  eq(wa.file, multi .. "/apps/A/A.code-workspace")
+  -- A/test is in that workspace? no. B/app: its own resolution, the outer file
+  local wb = ws_mod().resolve(multi .. "/apps/B/app/src/B_app.Codeunit.al")
+  eq(wb.file, multi .. "/all.code-workspace")
+  -- now a case where the first-opened workspace contains the sibling
+  ws_mod()._reset()
+  vim.fn.writefile(
+    { '{ "folders": [ { "path": "app" }, { "path": "test" } ] }' },
+    multi .. "/apps/A/A.code-workspace"
+  )
+  vim.fn.writefile(
+    { '{ "folders": [ { "path": "apps/A/test" } ] }' },
+    multi .. "/all.code-workspace"
+  )
+  eq(
+    ws_mod().resolve(multi .. "/apps/A/app/src/A_app.Codeunit.al").file,
+    multi .. "/apps/A/A.code-workspace"
+  )
+  -- A/test is listed by both; outermost (all) must win regardless of what was opened first
+  eq(
+    ws_mod().resolve(multi .. "/apps/A/test/src/A_test.Codeunit.al").file,
+    multi .. "/all.code-workspace"
+  )
+end
+
 T["folder_for picks the deepest folder"] = function()
   local multi = H.fixture("multi")
   local ws = ws_mod().resolve(multi .. "/apps/A/app/src/A_app.Codeunit.al")

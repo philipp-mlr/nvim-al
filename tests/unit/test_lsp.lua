@@ -427,6 +427,51 @@ T["fix: switching re-sends the open buffers of the new active folder"] = functio
   eq(full, true)
 end
 
+T["minor: folders added to the saved workspace file are loaded"] = function()
+  local multi = H.fixture("multi")
+  local ws_file = multi .. "/all.code-workspace"
+  vim.g.loaded_nvim_al = nil
+  vim.cmd("runtime plugin/nvim-al.lua")
+  -- start with only A/app and B/app
+  vim.fn.writefile(
+    { '{ "folders": [ { "path": "apps/A/app", "name": "A" }, { "path": "apps/B/app" } ] }' },
+    ws_file
+  )
+  open(multi .. "/apps/A/app/src/A_app.Codeunit.al")
+  settle(1)
+  eq(count(read_log(), "al/loadManifest"), 2)
+  -- add A/test and save the workspace file in Neovim
+  vim.cmd("edit " .. ws_file)
+  vim.api.nvim_buf_set_lines(0, 0, -1, false, {
+    '{ "folders": [ { "path": "apps/A/app", "name": "A" }, { "path": "apps/B/app" }, { "path": "apps/A/test", "name": "A - Test" } ] }',
+  })
+  vim.cmd("write")
+  wait_for(function()
+    return count(read_log(), "al/loadManifest") >= 3
+  end)
+  eq(count(read_log(), "al/loadManifest"), 3)
+  local added
+  for _, m in ipairs(read_log()) do
+    if m.method == "al/didChangeWorkspaceFolders" then
+      added = m.params
+    end
+  end
+  eq(added ~= nil, true)
+  eq(#added.added, 1)
+  eq(added.added[1].name, "A - Test")
+  eq(#added.removed, 0)
+  -- the new folder is usable: a buffer in it activates it
+  open(multi .. "/apps/A/test/src/A_test.Codeunit.al")
+  settle(3)
+  local last
+  for _, m in ipairs(read_log()) do
+    if m.method == "al/setActiveWorkspace" then
+      last = m.params
+    end
+  end
+  eq(last.settings.workspacePath, multi .. "/apps/A/test")
+end
+
 T["status reports workspace and folder"] = function()
   local multi = H.fixture("multi")
   local _, buf = open(multi .. "/apps/A/test/src/A_test.Codeunit.al")

@@ -289,11 +289,8 @@ function M.resolve(path, opts)
     ws.folders[1].name = ws.folders[1].manifest.name
   end
 
-  for _, f in ipairs(ws.folders) do
-    if f.manifest and cache[f.path] == nil then
-      cache[f.path] = ws
-    end
-  end
+  -- cache only the resolved project: siblings resolve on their own, so the
+  -- workspace a folder belongs to never depends on what was opened first
   cache[project] = ws
   return ws, nil
 end

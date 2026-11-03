@@ -254,6 +254,29 @@ T["fix: single-session guard runs in the adapter, ignores other envs, async sele
   eq(rawget(env.dap.listeners.before, "launch") and env.dap.listeners.before.launch["nvim-al"], nil)
 end
 
+T["minor: kill_adapters finds AL debug adapters among Neovim's children"] = function()
+  -- a fake adapter: a child process whose command line looks like the real one
+  -- argv carries the same markers as `dotnet …EditorServices.Host.dll /startDebugging`
+  local job = vim.fn.jobstart({
+    "sh",
+    "-c",
+    "sleep 30; true", -- two commands: sh stays the process, with its argv
+    "/x/Microsoft.Dynamics.Nav.EditorServices.Host.dll",
+    "/startDebugging",
+  })
+  local other = vim.fn.jobstart({ "sleep", "30" })
+  vim.wait(300)
+  local pid = vim.fn.jobpid(job)
+  local found = require("nvim-al.dap")._adapter_pids()
+  eq(vim.tbl_contains(found, pid), true)
+  eq(vim.tbl_contains(found, vim.fn.jobpid(other)), false)
+  require("nvim-al.dap").kill_adapters()
+  -- jobwait returns -3 for a job id that already ended and was cleaned up
+  local exited = vim.fn.jobwait({ job }, 3000)[1]
+  eq(exited ~= -1, true)
+  pcall(vim.fn.jobstop, other)
+end
+
 T["setup is idempotent"] = function()
   local a = env.dap.adapters.al
   require("nvim-al.dap").setup()

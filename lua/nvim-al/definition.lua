@@ -10,9 +10,23 @@ local function lsp()
   return require("nvim-al.lsp")
 end
 
---- Any nvim-al client (preview buffers have no workspace of their own).
+--- The client for a buffer. Preview buffers have no workspace of their own:
+--- they use the client that produced them (vim.b.nvim_al_client), so with two
+--- workspaces open a preview never talks to the other server.
 local function any_client(bufnr)
+  local id = vim.b[bufnr].nvim_al_client
+  local owner = id and vim.lsp.get_client_by_id(id)
+  if owner and not owner:is_stopped() then
+    return owner
+  end
   return lsp().client_for(bufnr) or vim.lsp.get_clients({ name = lsp().NAME })[1]
+end
+
+--- Remember which client a preview buffer belongs to.
+local function claim(buf, client_id)
+  if client_id then
+    vim.b[buf].nvim_al_client = client_id
+  end
 end
 
 --- Active nvim-dap session of an AL adapter, if any.
@@ -105,9 +119,11 @@ end
 ---@param uri string
 ---@param on_done? fun(buf: integer)
 ---@return integer bufnr
-function M.open_preview(uri, on_done)
+---@param client_id? integer client that returned the URI
+function M.open_preview(uri, on_done, client_id)
   local buf = vim.fn.bufadd(uri)
   vim.b[buf].nvim_al_preview = true
+  claim(buf, client_id)
   local loaded = vim.api.nvim_buf_is_loaded(buf) and vim.api.nvim_buf_line_count(buf) > 1
   -- Register the callback first: switching to the buffer fires BufReadCmd,
   -- which starts the load (or the load starts here when the plugin is not sourced).
@@ -152,9 +168,11 @@ end
 --- Load an al-preview:// buffer (without showing it), then call on_done.
 ---@param uri string
 ---@param on_done fun(buf: integer)
-function M.preload(uri, on_done)
+---@param client_id? integer client that returned the URI
+function M.preload(uri, on_done, client_id)
   local buf = vim.fn.bufadd(uri)
   vim.b[buf].nvim_al_preview = true
+  claim(buf, client_id)
   if vim.api.nvim_buf_is_loaded(buf) and vim.api.nvim_buf_line_count(buf) > 1 then
     return on_done(buf)
   end
@@ -198,7 +216,7 @@ function M.jump(bufnr)
     if uri:sub(1, #PREVIEW) == PREVIEW then
       M.open_preview(uri, function()
         set_cursor(result.range)
-      end)
+      end, client.id)
       return
     end
     uri = fix_dal(uri)
@@ -208,13 +226,52 @@ function M.jump(bufnr)
   end, bufnr)
 end
 
---- tagfunc: <C-]> and :tag use al/gotodefinition.
-function M.tagfunc(pattern, flags)
+--- tagfunc: <C-]> (and :tag under the cursor) use al/gotodefinition.
+--- Synchronous so Neovim gets a real tag entry and pushes the tag stack;
+--- preview targets are loaded first so the tag can point into them.
+function M.tagfunc(_, flags)
   if not flags:find("c", 1, true) then
-    return vim.NIL -- only for cursor-based lookups; fall back otherwise
+    return vim.NIL -- not a cursor lookup: let Neovim use tags files
   end
-  M.jump(vim.api.nvim_get_current_buf())
-  return {}
+  local bufnr = vim.api.nvim_get_current_buf()
+  local client = any_client(bufnr)
+  if not client then
+    return vim.NIL
+  end
+  local params = {
+    browserInfo = { browser = "SystemDefault", incognito = false },
+    environmentInfo = { env = vim.NIL },
+    textDocumentPositionParams = vim.lsp.util.make_position_params(0, client.offset_encoding),
+  }
+  local res = client:request_sync("al/gotodefinition", params, 10000, bufnr)
+  local r = res and res.result
+  if type(r) ~= "table" or not r.uri then
+    return vim.NIL
+  end
+  local uri = M.fix_uri(r.uri)
+  local filename
+  if M.is_preview(uri) then
+    local done = false
+    M.preload(uri, function()
+      done = true
+    end, client.id)
+    vim.wait(10000, function()
+      return done
+    end, 20)
+    filename = uri
+  else
+    filename = vim.uri_to_fname(uri)
+  end
+  local line = r.range and r.range.start.line + 1 or 1
+  local col = r.range and r.range.start.character + 1 or 1
+  local word = vim.fn.expand("<cword>")
+  return {
+    {
+      name = word ~= "" and word or "definition",
+      filename = filename,
+      cmd = ("call cursor(%d, %d)"):format(line, col),
+    },
+  }
 end
 
 --- Buffer-local setup on attach: gd and tagfunc, unless the user mapped gd.

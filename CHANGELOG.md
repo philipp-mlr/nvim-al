@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.1
+
+- `<C-]>` jumps synchronously with a real tag entry, so the tag stack and `:pop` work.
+- Symbol previews stay with the language server that produced them (two
+  workspaces or worktrees open at once).
+- The workspace a folder belongs to no longer depends on which project was
+  opened first.
+- Folders added to or removed from a saved `.code-workspace` are loaded without
+  a restart (`al/didChangeWorkspaceFolders` + `al/loadManifest`).
+- AL debug adapters left running are killed when Neovim exits.
+- Documented that nvim-dap's DEBUG log contains the adapter environment.
+
 ## 0.1.0 (unreleased)
 
 First release.

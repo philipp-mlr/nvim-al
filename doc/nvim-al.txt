@@ -130,6 +130,12 @@ For attach with "breakOnNext", start the action you want to debug after the
 adapter reports "Debugger will attach to the next session". Only one AL
 debug session per environment works at a time.
 
+Note: UserPassword credentials reach the adapter through its environment.
+With nvim-dap's log level at DEBUG or TRACE (`require("dap").set_log_level`),
+nvim-dap writes the adapter's environment, password included, to its log
+file (stdpath("log")/dap.log). The default level (INFO) does not. Lower the
+level again and delete the log after debugging a debug session.
+
 ==============================================================================
 7. HOOKS                                                       *nvim-al-hooks*
 

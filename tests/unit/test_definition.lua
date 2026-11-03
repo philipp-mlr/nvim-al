@@ -269,4 +269,66 @@ T["fix: a user gd mapping is kept"]["case"] = function()
   eq(m.rhs, "<cmd>echo 'mine'<cr>")
 end
 
+T["minor: <C-]> jumps synchronously and pushes the tag stack"] = MiniTest.new_set({
+  hooks = {
+    pre_once = function()
+      next_mode = "file"
+    end,
+  },
+})
+T["minor: <C-]> jumps synchronously and pushes the tag stack"]["case"] = function()
+  vim.api.nvim_win_set_cursor(0, { 1, 10 })
+  local ok, err = pcall(vim.cmd, "normal! \29") -- <C-]>
+  eq(ok, true, err)
+  eq(vim.api.nvim_buf_get_name(0), vim.env.FAKE_DEF_TARGET)
+  eq(vim.api.nvim_win_get_cursor(0), { 3, 4 })
+  local stack = vim.fn.gettagstack()
+  eq(stack.length >= 1, true)
+  vim.cmd("pop")
+  eq(vim.api.nvim_get_current_buf(), env.buf)
+end
+
+T["minor: tagfunc for previews returns a tag into the preview buffer"] = MiniTest.new_set({
+  hooks = {
+    pre_once = function()
+      next_mode = "preview"
+    end,
+  },
+})
+T["minor: tagfunc for previews returns a tag into the preview buffer"]["case"] = function()
+  local tags = require("nvim-al.definition").tagfunc("x", "c")
+  eq(type(tags), "table")
+  eq(#tags, 1)
+  eq(tags[1].filename, "al-preview://allang/Base Application/Table/18/Customer.al")
+  eq(tags[1].cmd, "call cursor(3, 5)")
+end
+
+T["minor: a preview is loaded from the client that returned it"] = MiniTest.new_set({
+  hooks = {
+    pre_once = function()
+      next_mode = "preview"
+    end,
+  },
+})
+T["minor: a preview is loaded from the client that returned it"]["case"] = function()
+  -- a second workspace (another worktree) with its own client, started first in the list
+  local other = H.fixture("multi")
+  vim.cmd("edit " .. other .. "/apps/A/app/src/A_app.Codeunit.al")
+  local c2 = require("nvim-al.lsp").attach(vim.api.nvim_get_current_buf())
+  vim.wait(3000, function()
+    local st = require("nvim-al.lsp").state(c2.id)
+    return st and st.active ~= nil
+  end, 20)
+  vim.cmd("buffer " .. env.buf)
+  require("nvim-al.definition").jump(env.buf)
+  local want = "al-preview://allang/Base Application/Table/18/Customer.al"
+  vim.wait(5000, function()
+    return vim.api.nvim_buf_get_name(0) == want and vim.api.nvim_buf_line_count(0) > 1
+  end, 20)
+  local b = vim.api.nvim_get_current_buf()
+  eq(vim.b[b].nvim_al_client, env.client.id)
+  eq(vim.lsp.buf_is_attached(b, env.client.id), true)
+  eq(vim.lsp.buf_is_attached(b, c2.id), false)
+end
+
 return T
