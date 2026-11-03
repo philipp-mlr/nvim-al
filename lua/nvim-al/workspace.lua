@@ -80,7 +80,7 @@ function M.project_folder(path)
   local dir = start_dir(path)
   local levels = 0
   while true do
-    if exists(dir .. "/app.json") then
+    if exists(dir .. "/app.json") and M.is_al_manifest(dir .. "/app.json") then
       return dir
     end
     if root and util.same_path(dir, root) then
@@ -124,6 +124,17 @@ function M.load_manifest(folder_path)
     raw = text,
   },
     nil
+end
+
+--- True when an app.json is an AL manifest (other ecosystems use app.json too).
+---@param path string
+---@return boolean
+function M.is_al_manifest(path)
+  local v = jsonc.read(path)
+  return type(v) == "table"
+    and type(v.id) == "string"
+    and type(v.publisher) == "string"
+    and (v.platform ~= nil or v.application ~= nil or v.runtime ~= nil or v.idRanges ~= nil)
 end
 
 --- Folders listed in a workspace file, resolved against the file's directory.

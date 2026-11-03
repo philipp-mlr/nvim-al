@@ -116,7 +116,10 @@ local subcommands = {
       if not ctx then
         return
       end
-      require("nvim-al.launch").forget(ctx.folder.path)
+      -- also drops cached credentials of the old target (e.g. a mistyped password)
+      require("nvim-al.launch").forget(ctx.folder.path, function(old)
+        require("nvim-al.credentials").forget(old)
+      end)
       require("nvim-al.launch").target(ctx.ws, ctx.folder, ctx.cfg, function(t)
         if t then
           util.notify("target for " .. ctx.folder.name .. ": " .. t.name)
@@ -126,13 +129,7 @@ local subcommands = {
   },
   restart = {
     run = function()
-      local lsp = require("nvim-al.lsp")
-      local client = lsp.client_for(cur())
-      if client then
-        lsp.restart(client.config._nvim_al_key)
-      else
-        lsp.attach(cur())
-      end
+      require("nvim-al.lsp").restart_buffer(cur())
     end,
   },
 }

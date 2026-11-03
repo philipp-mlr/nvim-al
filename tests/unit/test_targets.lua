@@ -181,6 +181,29 @@ T["symbols: downloadsymbols with target flags, global variant"] = function()
   eq(vim.tbl_contains(env.calls[2].args, "--server"), false)
 end
 
+T["fix: :AL target forgets the target and its cached credentials"] = function()
+  vim.env.BC_SERVER_USERNAME, vim.env.BC_SERVER_PASSWORD = nil, nil
+  local asked = 0
+  local oi, os_ = vim.ui.input, vim.fn.inputsecret
+  vim.ui.input = function(_, cb)
+    asked = asked + 1
+    cb("ADMIN")
+  end
+  vim.fn.inputsecret = function()
+    return "pw"
+  end
+  vim.cmd("edit " .. env.real .. "/app/src/GadgetMgt.Codeunit.al")
+  require("nvim-al.targets").symbols(0)
+  require("nvim-al.targets").symbols(0)
+  eq(asked, 1)
+  vim.g.loaded_nvim_al = nil
+  vim.cmd("runtime plugin/nvim-al.lua")
+  vim.cmd("AL target")
+  require("nvim-al.targets").symbols(0)
+  vim.ui.input, vim.fn.inputsecret = oi, os_
+  eq(asked, 2)
+end
+
 T["hooks short-circuit publish and test"] = function()
   local seen = {}
   require("nvim-al").setup({

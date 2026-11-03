@@ -76,6 +76,21 @@ T["cancel returns nil and caches nothing"] = function()
   eq(env.inputs, 2)
 end
 
+T["fix: empty password (Esc in inputsecret) counts as cancel"] = function()
+  env.user, env.pass = "ADMIN", ""
+  eq(get(target()), nil)
+  env.pass = "pw"
+  eq(get(target()).BC_SERVER_PASSWORD, "pw")
+end
+
+T["fix: forget drops one target's credentials"] = function()
+  env.user, env.pass = "ADMIN", "pw"
+  get(target())
+  require("nvim-al.credentials").forget(target())
+  get(target())
+  eq(env.inputs, 2)
+end
+
 T["clear forgets cached credentials"] = function()
   env.user, env.pass = "ADMIN", "pw"
   get(target())

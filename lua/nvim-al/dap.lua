@@ -69,6 +69,35 @@ local function save_project_buffers(folder_path)
   require("nvim-al.build")._save_project_buffers({ path = folder_path })
 end
 
+local function server_key(c)
+  return table.concat({ c.server or "", tostring(c.port or ""), c.serverInstance or "" }, "|")
+end
+
+--- Only one adapter per environment: an older armed one takes the next break.
+--- Runs inside the adapter function, before the new session exists. cb(true)
+--- to go ahead.
+local function check_single(config, cb)
+  local ok, dap = pcall(require, "dap")
+  if not ok then
+    return cb(true)
+  end
+  for _, s in pairs(dap.sessions() or {}) do
+    if s.config and s.config.type == "al" and server_key(s.config) == server_key(config) then
+      return vim.ui.select({ "Stop the other session", "Cancel" }, {
+        prompt = "An AL debug session for this environment is already running",
+      }, function(choice)
+        if choice == "Stop the other session" then
+          s:close()
+          cb(true)
+        else
+          cb(false)
+        end
+      end)
+    end
+  end
+  cb(true)
+end
+
 --- nvim-dap adapter function: start the AL debug adapter for config.__nvim_al_folder.
 local function adapter(callback, config)
   local folder = config.__nvim_al_folder
@@ -92,54 +121,34 @@ local function adapter(callback, config)
     tenant = config.tenant,
     authentication = config.authentication,
   }
-  credentials.env(target, function(extra)
-    if not extra then
-      return util.notify("debugging cancelled (no credentials)", vim.log.levels.WARN)
+  check_single(config, function(go)
+    if not go then
+      return
     end
-    if config.request == "launch" then
-      save_project_buffers(folder)
-    end
-    -- nvim-dap hands options.env to uv.spawn unchanged, which wants "KEY=VALUE"
-    -- strings; a map is silently ignored (the adapter then has no credentials).
-    local env = {}
-    for k, v in pairs(vim.tbl_extend("force", vim.fn.environ(), extra)) do
-      env[#env + 1] = k .. "=" .. v
-    end
-    table.sort(env)
-    callback({
-      type = "executable",
-      command = cmd[1],
-      args = vim.list_slice(cmd, 2),
-      -- The adapter uses its working directory as package cache root when
-      -- al.packageCachePath is not passed: it must be the project folder.
-      options = { cwd = folder, env = env, detached = false },
-    })
-  end)
-end
-
-local function server_key(c)
-  return table.concat({ c.server or "", tostring(c.port or ""), c.serverInstance or "" }, "|")
-end
-
---- Only one adapter per environment: an older armed one takes the next break.
-local function check_single(config)
-  local dap = require("dap")
-  for _, s in pairs(dap.sessions() or {}) do
-    if s.config and s.config.type == "al" and server_key(s.config) == server_key(config) then
-      local choice
-      vim.ui.select({ "Stop the other session", "Cancel" }, {
-        prompt = "An AL debug session for this environment is already running",
-      }, function(c)
-        choice = c
-      end)
-      if choice == "Stop the other session" then
-        s:close()
-        return true
+    credentials.env(target, function(extra)
+      if not extra then
+        return util.notify("debugging cancelled (no credentials)", vim.log.levels.WARN)
       end
-      return false
-    end
-  end
-  return true
+      if config.request == "launch" then
+        save_project_buffers(folder)
+      end
+      -- nvim-dap hands options.env to uv.spawn unchanged, which wants "KEY=VALUE"
+      -- strings; a map is silently ignored (the adapter then has no credentials).
+      local env = {}
+      for k, v in pairs(vim.tbl_extend("force", vim.fn.environ(), extra)) do
+        env[#env + 1] = k .. "=" .. v
+      end
+      table.sort(env)
+      callback({
+        type = "executable",
+        command = cmd[1],
+        args = vim.list_slice(cmd, 2),
+        -- The adapter uses its working directory as package cache root when
+        -- al.packageCachePath is not passed: it must be the project folder.
+        options = { cwd = folder, env = env, detached = false },
+      })
+    end)
+  end)
 end
 
 --- The AL adapter omits `command` in some responses (attach, launch, …).
@@ -215,11 +224,6 @@ function M.setup()
       M._fix_responses(new)
     end
   end
-
-  dap.listeners.before.launch[KEY] = function(session)
-    return session.config.type ~= "al" or check_single(session.config)
-  end
-  dap.listeners.before.attach[KEY] = dap.listeners.before.launch[KEY]
 
   dap.listeners.after["event_al/openUri"][KEY] = function(_, body)
     if body and body.uri then

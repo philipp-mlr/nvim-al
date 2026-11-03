@@ -33,7 +33,10 @@ vim.api.nvim_create_autocmd("FileType", {
   group = group,
   pattern = { "json", "jsonc" },
   callback = function(args)
-    if vim.fs.basename(vim.api.nvim_buf_get_name(args.buf)) == "app.json" then
+    local name = vim.api.nvim_buf_get_name(args.buf)
+    if
+      vim.fs.basename(name) == "app.json" and require("nvim-al.workspace").is_al_manifest(name)
+    then
       attach(args)
     end
   end,

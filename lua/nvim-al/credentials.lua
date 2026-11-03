@@ -39,13 +39,19 @@ function M.env(target, cb)
         return cb(nil)
       end
       local pass = vim.fn.inputsecret("Password: ")
-      if pass == nil then
+      if pass == nil or pass == "" then -- <Esc> returns ""
         return cb(nil)
       end
       cache[k] = { user = user, pass = pass }
       cb({ BC_SERVER_USERNAME = user, BC_SERVER_PASSWORD = pass })
     end
   )
+end
+
+--- Forget the cached credentials of one target (wrong password).
+---@param target nvim_al.Target
+function M.forget(target)
+  cache[key(target)] = nil
 end
 
 --- Forget all cached credentials.

@@ -190,6 +190,70 @@ T["responses without command get it back from the matching request"] = function(
   eq(session.got.command, "attach")
 end
 
+T["fix: single-session guard runs in the adapter, ignores other envs, async select"] = function()
+  local configs = env.dap.providers.configs["nvim-al"](vim.api.nvim_get_current_buf())
+  local cfg = configs[1]
+  -- no other session: no prompt, adapter starts
+  local prompts, got = 0, nil
+  local orig = vim.ui.select
+  vim.ui.select = function(items, _, cb)
+    prompts = prompts + 1
+    vim.schedule(function()
+      cb(env.choice)
+    end)
+  end
+  env.dap.adapters.al(function(a)
+    got = a
+  end, cfg)
+  eq(prompts, 0)
+  eq(got ~= nil, true)
+  -- a running session for another environment: still no prompt
+  local closed = false
+  env.dap._sessions = {
+    [1] = {
+      config = vim.tbl_extend("force", cfg, { serverInstance = "OTHER" }),
+      close = function()
+        closed = true
+      end,
+    },
+  }
+  got = nil
+  env.dap.adapters.al(function(a)
+    got = a
+  end, cfg)
+  eq(prompts, 0)
+  eq(got ~= nil, true)
+  -- same environment: async prompt; cancel -> adapter not started
+  env.dap._sessions = {
+    [1] = {
+      config = vim.deepcopy(cfg),
+      close = function()
+        closed = true
+      end,
+    },
+  }
+  env.choice = "Cancel"
+  got = nil
+  env.dap.adapters.al(function(a)
+    got = a
+  end, cfg)
+  vim.wait(200)
+  eq(prompts, 1)
+  eq(got, nil)
+  eq(closed, false)
+  -- stop the other -> it is closed and the adapter starts
+  env.choice = "Stop the other session"
+  env.dap.adapters.al(function(a)
+    got = a
+  end, cfg)
+  vim.wait(200)
+  eq(closed, true)
+  eq(got ~= nil, true)
+  vim.ui.select = orig
+  -- no before.launch/attach listeners (they run on the response, not before)
+  eq(rawget(env.dap.listeners.before, "launch") and env.dap.listeners.before.launch["nvim-al"], nil)
+end
+
 T["setup is idempotent"] = function()
   local a = env.dap.adapters.al
   require("nvim-al.dap").setup()

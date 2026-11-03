@@ -46,7 +46,10 @@ local function handle(msg)
   record(msg)
   local m = msg.method
   if m == "initialize" then
-    send({ jsonrpc = "2.0", id = msg.id, result = { capabilities = capabilities } })
+    local d = tonumber(os.getenv("FAKE_INIT_DELAY_MS") or "0")
+    vim.defer_fn(function()
+      send({ jsonrpc = "2.0", id = msg.id, result = { capabilities = capabilities } })
+    end, d)
   elseif m == "initialized" then
     if exit_code then
       vim.defer_fn(function()

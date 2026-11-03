@@ -116,6 +116,12 @@ The payload **must** be wrapped as `{ currentWorkspaceFolderPath, settings }`.
 With the settings fields at the top level the request fails without an
 error message and the project never loads.
 
+**After switching back to a project, re-send its open documents.** The
+server then works on its own copy of that project's files and ignores a
+`didClose`/`didOpen` with new content that races the switch, so diagnostics
+and go-to-definition for that file go stale. A full-text `textDocument/didChange`
+sent after the `setActiveWorkspace` response is picked up (verified on 30.0).
+
 Re-send step 4 (and 5) whenever the active *folder* changes, i.e. when the
 user moves to a buffer in another project. VS Code guards on the last folder
 path and does nothing when the folder stays the same. Measured: a switch takes

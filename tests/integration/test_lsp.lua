@@ -139,6 +139,19 @@ T["gd from test into the app's table source"] = function()
   eq(vim.api.nvim_buf_get_name(0), want)
 end
 
+T["vim.lsp.buf.definition() works like gd (LspAttach mappings, pickers)"] = function()
+  vim.cmd("edit " .. real .. "/test/src/GadgetTest.Codeunit.al")
+  wait_active(real .. "/test")
+  cursor_on('Record "Gadget"')
+  vim.cmd("normal! 9l")
+  vim.lsp.buf.definition()
+  local want = real .. "/app/src/Gadget.Table.al"
+  vim.wait(30000, function()
+    return vim.api.nvim_buf_get_name(0) == want
+  end, 100)
+  eq(vim.api.nvim_buf_get_name(0), want)
+end
+
 T["gd into a symbol package opens a read-only preview"] = function()
   local mgt = real .. "/app/src/GadgetMgt.Codeunit.al"
   local lines = vim.fn.readfile(mgt)
@@ -147,9 +160,14 @@ T["gd into a symbol package opens a read-only preview"] = function()
   vim.cmd("edit! " .. mgt)
   local buf = vim.api.nvim_get_current_buf()
   wait_active(real .. "/app")
-  -- wait until the server has analysed the new line (Cust is unused as well)
+  -- wait until the server has analysed the new line: its own "Cust is unused"
+  -- diagnostic (not just any AA0137 left from earlier cases)
   vim.wait(90000, function()
-    return count_code(buf, "AA0137") >= 2
+    for _, d in ipairs(vim.diagnostic.get(buf)) do
+      if d.code == "AA0137" and d.message:find("'Cust'", 1, true) then
+        return true
+      end
+    end
   end, 200)
   cursor_on("Record Customer")
   vim.cmd("normal! 9l")

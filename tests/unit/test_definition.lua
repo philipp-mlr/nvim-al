@@ -194,4 +194,79 @@ T["al-preview .dal location stays a preview"]["case"] = function()
   eq(vim.bo[b].filetype, "al")
 end
 
+T["fix: textDocument/definition is routed to al/gotodefinition"] = MiniTest.new_set({
+  hooks = {
+    pre_once = function()
+      next_mode = "file"
+    end,
+  },
+})
+T["fix: textDocument/definition is routed to al/gotodefinition"]["case"] = function()
+  eq(env.client.server_capabilities.definitionProvider, true)
+  local res = env.client:request_sync(
+    "textDocument/definition",
+    vim.lsp.util.make_position_params(0, "utf-16"),
+    5000,
+    env.buf
+  )
+  eq(res.result.uri, vim.uri_from_fname(vim.env.FAKE_DEF_TARGET))
+  -- vim.lsp.buf.definition() (what LspAttach gd mappings and pickers call) jumps
+  vim.lsp.buf.definition()
+  wait_for(function()
+    return vim.api.nvim_buf_get_name(0) == vim.env.FAKE_DEF_TARGET
+  end)
+  eq(vim.api.nvim_buf_get_name(0), vim.env.FAKE_DEF_TARGET)
+end
+
+T["fix: vim.lsp.buf.definition opens al-preview results"] = MiniTest.new_set({
+  hooks = {
+    pre_once = function()
+      next_mode = "preview"
+    end,
+  },
+})
+T["fix: vim.lsp.buf.definition opens al-preview results"]["case"] = function()
+  local errs = {}
+  local orig_err = vim.api.nvim_err_writeln
+  local orig_sched = vim.schedule
+  vim.schedule = function(fn)
+    orig_sched(function()
+      local ok, e = pcall(fn)
+      if not ok then
+        table.insert(errs, e)
+      end
+    end)
+  end
+  vim.lsp.buf.definition()
+  local want = "al-preview://allang/Base Application/Table/18/Customer.al"
+  wait_for(function()
+    return vim.api.nvim_buf_get_name(0) == want and vim.api.nvim_buf_line_count(0) > 1
+  end)
+  vim.wait(300)
+  vim.schedule = orig_sched
+  eq(errs, {})
+  eq(vim.api.nvim_buf_get_name(0), want)
+  eq(vim.api.nvim_buf_get_lines(0, 0, 1, false)[1], "table 18 Customer")
+  eq(vim.api.nvim_win_get_cursor(0), { 3, 4 })
+end
+
+T["fix: a user gd mapping is kept"] = MiniTest.new_set({
+  hooks = {
+    pre_once = function()
+      next_mode = "file"
+    end,
+  },
+})
+T["fix: a user gd mapping is kept"]["case"] = function()
+  vim.keymap.set("n", "gd", "<cmd>echo 'mine'<cr>")
+  vim.cmd("edit " .. env.multi .. "/apps/B/app/src/B_app.Codeunit.al")
+  local b = vim.api.nvim_get_current_buf()
+  require("nvim-al.lsp").attach(b)
+  vim.wait(500)
+  local m = vim.fn.maparg("gd", "n", false, true)
+  vim.keymap.del("n", "gd")
+  eq(m.buffer, 0)
+  eq(m.rhs, "<cmd>echo 'mine'<cr>")
+end
+
 return T

@@ -173,8 +173,13 @@ end
 
 --- Forget the remembered target of a folder (:AL target).
 ---@param folder_path string
-function M.forget(folder_path)
+---@param on_forget? fun(target: nvim_al.Target) called with the forgotten target
+function M.forget(folder_path, on_forget)
+  local old = remembered[folder_path]
   remembered[folder_path] = nil
+  if old and on_forget then
+    on_forget(old)
+  end
 end
 
 --- altool connection flags for a target, only for fields that are set.

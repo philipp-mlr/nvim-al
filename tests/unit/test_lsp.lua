@@ -158,6 +158,7 @@ T["transitive dependencies are configured with their referencing parent"] = func
       name = "A Test",
       publisher = "Fixture",
       version = "1.0.0.0",
+      platform = "28.0.0.0",
       dependencies = {
         {
           id = "bbbbbbbb-0000-0000-0000-000000000001",
@@ -305,6 +306,125 @@ T["missing dotnet: no error raised, one scheduled error notice"] = function()
   end, env.notes)
   eq(#errs, 1)
   eq(#clients(), 0)
+end
+
+T["fix: crashed server is not respawned on the next AL buffer"] = function()
+  vim.env.FAKE_EXIT_CODE = "3"
+  local multi = H.fixture("multi")
+  open(multi .. "/apps/A/app/src/A_app.Codeunit.al")
+  wait_for(function()
+    return #clients() == 0
+  end)
+  vim.wait(300)
+  local inits = count(read_log(), "initialize")
+  open(multi .. "/apps/B/app/src/B_app.Codeunit.al")
+  vim.wait(500)
+  eq(count(read_log(), "initialize"), inits)
+  eq(#clients(), 0)
+  -- :AL restart starts it again
+  vim.env.FAKE_EXIT_CODE = nil
+  require("nvim-al.lsp").restart_buffer(vim.api.nvim_get_current_buf())
+  wait_for(function()
+    return count(read_log(), "initialize") > inits
+  end)
+  eq(count(read_log(), "initialize") > inits, true)
+end
+
+T["fix: :AL restart starts a fresh client and activates the folder"] = function()
+  local multi = H.fixture("multi")
+  local client = open(multi .. "/apps/A/app/src/A_app.Codeunit.al")
+  settle(1)
+  local old = client.id
+  require("nvim-al.lsp").restart(client.config._nvim_al_key)
+  local fresh
+  wait_for(function()
+    fresh = vim.lsp.get_clients({ name = "nvim-al" })[1]
+    local st = fresh and require("nvim-al.lsp").state(fresh.id)
+    return fresh and fresh.id ~= old and st and st.active ~= nil
+  end, 8000)
+  eq(fresh ~= nil and fresh.id ~= old, true)
+  eq(require("nvim-al.lsp").state(fresh.id).active, multi .. "/apps/A/app")
+end
+
+T["fix: slow initialize (>2 s) still activates the first folder"] = function()
+  require("nvim-al").setup({
+    _host_cmd = { vim.v.progpath, "-l", H.root .. "/tests/fake_server.lua" },
+  })
+  vim.env.FAKE_INIT_DELAY_MS = "2500"
+  local multi = H.fixture("multi")
+  local client = open(multi .. "/apps/A/app/src/A_app.Codeunit.al")
+  vim.env.FAKE_INIT_DELAY_MS = nil
+  wait_for(function()
+    local st = require("nvim-al.lsp").state(client.id)
+    return st and st.active ~= nil
+  end, 8000)
+  eq(require("nvim-al.lsp").state(client.id).active, multi .. "/apps/A/app")
+end
+
+T["fix: entering a buffer of a running workspace does not look up the toolchain"] = function()
+  local multi = H.fixture("multi")
+  open(multi .. "/apps/A/app/src/A_app.Codeunit.al")
+  settle(1)
+  local tc = require("nvim-al.toolchain")
+  local orig = tc.find_extension
+  local calls = 0
+  tc.find_extension = function(...)
+    calls = calls + 1
+    return orig(...)
+  end
+  -- drop the test override: without the fix, start() would now run the toolchain lookup
+  require("nvim-al").config()._host_cmd = nil
+  open(multi .. "/apps/B/app/src/B_app.Codeunit.al")
+  tc.find_extension = orig
+  eq(calls, 0)
+end
+
+T["fix: a non-AL app.json does not start the server"] = function()
+  local dir = vim.fn.tempname()
+  vim.fn.mkdir(dir .. "/.git", "p")
+  vim.fn.writefile({ '{ "expo": { "name": "my-app", "slug": "my-app" } }' }, dir .. "/app.json")
+  vim.g.loaded_nvim_al = nil
+  vim.cmd("runtime plugin/nvim-al.lua")
+  vim.cmd("edit " .. dir .. "/app.json")
+  vim.wait(300)
+  eq(#clients(), 0)
+  -- an AL app.json does
+  local multi = H.fixture("multi")
+  vim.cmd("edit " .. multi .. "/apps/A/app/app.json")
+  wait_for(function()
+    return #clients() == 1
+  end)
+  eq(#clients(), 1)
+end
+
+T["fix: switching re-sends the open buffers of the new active folder"] = function()
+  local multi = H.fixture("multi")
+  open(multi .. "/apps/A/app/src/A_app.Codeunit.al")
+  settle(1)
+  open(multi .. "/apps/B/app/src/B_app.Codeunit.al")
+  settle(2)
+  local before = 0
+  for _, m in ipairs(read_log()) do
+    if
+      m.method == "textDocument/didChange" and m.params.textDocument.uri:find("A_app", 1, true)
+    then
+      before = before + 1
+    end
+  end
+  open(multi .. "/apps/A/app/src/A_app.Codeunit.al")
+  settle(3)
+  local after, full = 0, false
+  for _, m in ipairs(read_log()) do
+    if
+      m.method == "textDocument/didChange" and m.params.textDocument.uri:find("A_app", 1, true)
+    then
+      after = after + 1
+      full = m.params.contentChanges[1].range == nil
+        and m.params.contentChanges[1].text:find("codeunit", 1, true) ~= nil
+    end
+  end
+  eq(after, before + 1)
+  eq(full, true)
 end
 
 T["status reports workspace and folder"] = function()

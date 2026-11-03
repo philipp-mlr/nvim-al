@@ -143,6 +143,38 @@ local function fix_dal(uri)
   return vim.uri_from_fname(vim.uri_to_fname(parent) .. "/" .. vim.uri_decode(last))
 end
 
+---@param uri string
+---@return boolean
+function M.is_preview(uri)
+  return uri:sub(1, #PREVIEW) == PREVIEW
+end
+
+--- Load an al-preview:// buffer (without showing it), then call on_done.
+---@param uri string
+---@param on_done fun(buf: integer)
+function M.preload(uri, on_done)
+  local buf = vim.fn.bufadd(uri)
+  vim.b[buf].nvim_al_preview = true
+  if vim.api.nvim_buf_is_loaded(buf) and vim.api.nvim_buf_line_count(buf) > 1 then
+    return on_done(buf)
+  end
+  -- register first: bufload fires BufReadCmd, which may start the load itself
+  M.load_preview(buf, uri, function()
+    on_done(buf)
+  end)
+  vim.fn.bufload(buf)
+end
+
+--- Normalise a URI returned by al/gotodefinition (preview URIs unchanged).
+---@param uri string
+---@return string
+function M.fix_uri(uri)
+  if uri:sub(1, #PREVIEW) == PREVIEW then
+    return uri
+  end
+  return fix_dal(uri)
+end
+
 --- Go to the definition of the symbol under the cursor.
 ---@param bufnr? integer
 function M.jump(bufnr)
@@ -189,7 +221,7 @@ end
 ---@param bufnr integer
 function M.on_attach(bufnr)
   local existing = vim.fn.maparg("gd", "n", false, true)
-  if vim.tbl_isempty(existing) or existing.buffer ~= 1 then
+  if vim.tbl_isempty(existing) then
     vim.keymap.set("n", "gd", function()
       M.jump(bufnr)
     end, { buffer = bufnr, desc = "AL: go to definition" })

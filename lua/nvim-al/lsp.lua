@@ -22,6 +22,24 @@ M.NAME = "nvim-al"
 ---@type table<integer, nvim_al.ClientState>
 local states = {}
 
+---@type table<string, boolean> workspace keys whose server exited with an error
+local failed = {}
+
+---@type table<string, nvim_al.Folder> folder to activate once a starting client is ready
+local initial = {}
+
+---@type table<integer, boolean> client ids nvim-al is stopping on purpose
+local stopping = {}
+
+--- Running (not stopping) nvim-al client for a workspace key.
+local function client_for_key(key)
+  for _, c in ipairs(vim.lsp.get_clients({ name = M.NAME, _uninitialized = true })) do
+    if c.config._nvim_al_key == key and not c:is_stopped() then
+      return c
+    end
+  end
+end
+
 local function cfg()
   return require("nvim-al").config()
 end
@@ -90,6 +108,30 @@ local function send_dependencies(client, st, active_folder)
   walk(active_folder)
 end
 
+--- After a project becomes active again, the server works on its own copy of
+--- that project's files and ignores a didOpen that raced the switch (verified
+--- on 30.0). A full-text didChange after the switch is picked up, so send one
+--- for every open buffer of the folder.
+local function resync_buffers(client, folder)
+  for b in pairs(client.attached_buffers) do
+    if vim.api.nvim_buf_is_loaded(b) then
+      local name = vim.api.nvim_buf_get_name(b)
+      if name ~= "" and util.is_inside(name, folder.path) then
+        local version = (vim.lsp.util.buf_versions[b] or 0) + 1
+        vim.lsp.util.buf_versions[b] = version
+        local text = table.concat(vim.api.nvim_buf_get_lines(b, 0, -1, false), "\n")
+        if vim.bo[b].eol then
+          text = text .. "\n"
+        end
+        client:notify("textDocument/didChange", {
+          textDocument = { uri = vim.uri_from_bufnr(b), version = version },
+          contentChanges = { { text = text } },
+        })
+      end
+    end
+  end
+end
+
 --- Make `folder` the active project (protocol §2.4 steps 4 and 5).
 ---@param client vim.lsp.Client
 ---@param folder nvim_al.Folder
@@ -120,6 +162,7 @@ function M.switch(client, folder, opts)
     if not err and result and result.success then
       st.active = folder.path
       send_dependencies(client, st, folder)
+      resync_buffers(client, folder)
     else
       util.notify(
         ("could not activate %s: %s"):format(folder.name, vim.inspect(err or result)),
@@ -240,7 +283,59 @@ local function patch_completion(client)
   end
 end
 
+--- Route textDocument/definition to al/gotodefinition (the server answers the
+--- standard request with null), so vim.lsp.buf.definition(), LspAttach `gd`
+--- mappings and pickers all work. Results become standard Locations; .dal file
+--- results are fixed up, al-preview:// URIs open through BufReadCmd.
+local function patch_definition(client)
+  client.server_capabilities.definitionProvider = true
+  local orig = client.request
+  client.request = function(self, method, params, handler, bufnr)
+    if method ~= "textDocument/definition" then
+      return orig(self, method, params, handler, bufnr)
+    end
+    local body = {
+      browserInfo = { browser = "SystemDefault", incognito = false },
+      environmentInfo = { env = vim.NIL },
+      textDocumentPositionParams = {
+        textDocument = params.textDocument,
+        position = params.position,
+      },
+    }
+    local h = handler or vim.lsp.handlers[method]
+    return orig(self, "al/gotodefinition", body, function(err, result, ctx, config)
+      local loc = nil
+      local definition = require("nvim-al.definition")
+      if not err and type(result) == "table" and result.uri then
+        loc = { uri = definition.fix_uri(result.uri), range = result.range }
+      end
+      ctx = vim.tbl_extend("force", ctx or {}, { method = method })
+      if not h then
+        return
+      end
+      if loc and definition.is_preview(loc.uri) then
+        -- load the preview content first: the standard handler sets the cursor
+        -- right after opening, which fails on a still-empty buffer
+        return definition.preload(loc.uri, function()
+          h(err, loc, ctx, config)
+        end)
+      end
+      return h(err, loc, ctx, config)
+    end, bufnr)
+  end
+end
+
 local function start(ws, bufnr)
+  local existing = client_for_key(ws.key)
+  if existing then
+    if not vim.lsp.buf_is_attached(bufnr, existing.id) then
+      vim.lsp.buf_attach_client(bufnr, existing.id)
+    end
+    return existing
+  end
+  if failed[ws.key] then
+    return nil -- crashed before: wait for :AL restart instead of respawning
+  end
   local c = cfg()
   local cmd, err
   if c._host_cmd then
@@ -291,10 +386,12 @@ local function start(ws, bufnr)
       }
       states[client.id] = st
       patch_completion(client)
+      patch_definition(client)
       load_manifests(client, st, function()
         st.ready = true
-        local q = st.queued
+        local q = st.queued or initial[ws.key]
         st.queued = nil
+        initial[ws.key] = nil
         if q then
           M.switch(client, q)
         end
@@ -302,7 +399,11 @@ local function start(ws, bufnr)
     end,
     on_exit = function(code, _, client_id)
       states[client_id] = nil
-      if code ~= 0 then
+      initial[ws.key] = nil
+      local intended = stopping[client_id]
+      stopping[client_id] = nil
+      if code ~= 0 and not intended then
+        failed[ws.key] = true
         vim.schedule(function()
           util.notify(
             ("language server exited with code %d; :AL restart to try again"):format(code),
@@ -314,7 +415,9 @@ local function start(ws, bufnr)
   }, {
     bufnr = bufnr,
     reuse_client = function(client, config)
-      return client.name == M.NAME and client.config._nvim_al_key == config._nvim_al_key
+      return client.name == M.NAME
+        and not client:is_stopped()
+        and client.config._nvim_al_key == config._nvim_al_key
     end,
   })
   return id and vim.lsp.get_client_by_id(id) or nil
@@ -341,35 +444,30 @@ function M.attach(bufnr)
   end
   local folder = workspace.folder_for(ws, name)
   if folder then
-    local st = states[client.id]
-    if st then
+    if states[client.id] then
       M.switch(client, folder)
     else
-      -- on_init has not run yet: queue through a short retry
-      local tries = 0
-      local function retry()
-        tries = tries + 1
-        if states[client.id] then
-          M.switch(client, folder)
-        elseif tries < 200 and not client:is_stopped() then
-          vim.defer_fn(retry, 10)
-        end
-      end
-      retry()
+      -- on_init has not run yet: it activates this (latest) folder when ready
+      initial[ws.key] = folder
     end
   end
   return client
 end
 
 --- Stop the client of a workspace and start it again for its buffers.
+--- Also clears a previous crash so the server may start again.
 ---@param ws_key string
 function M.restart(ws_key)
+  failed[ws_key] = nil
   for _, client in ipairs(vim.lsp.get_clients({ name = M.NAME, _uninitialized = true })) do
     if client.config._nvim_al_key == ws_key then
       local bufs = vim.tbl_keys(client.attached_buffers)
+      local id = client.id
+      stopping[id] = true
       client:stop(true)
-      vim.wait(3000, function()
-        return client:is_stopped()
+      -- is_stopped() is true at once; wait until the client is really gone
+      vim.wait(5000, function()
+        return vim.lsp.get_client_by_id(id) == nil
       end, 20)
       workspace.invalidate(ws_key)
       for _, b in ipairs(bufs) do
@@ -379,6 +477,23 @@ function M.restart(ws_key)
       end
     end
   end
+end
+
+--- :AL restart for a buffer: restart its running client, or start one again
+--- after a crash.
+---@param bufnr integer
+function M.restart_buffer(bufnr)
+  local client = M.client_for(bufnr)
+  if client then
+    return M.restart(client.config._nvim_al_key)
+  end
+  local name = vim.api.nvim_buf_get_name(bufnr)
+  name = util.normalize(vim.uv.fs_realpath(name) or name)
+  local ws = workspace.resolve(name, { workspace_file = cfg().hooks.workspace_file })
+  if ws then
+    failed[ws.key] = nil
+  end
+  M.attach(bufnr)
 end
 
 --- React to saved project files (app.json, workspace file, .vscode/settings.json).
@@ -416,6 +531,7 @@ end
 --- Stop all nvim-al clients (VimLeavePre).
 function M.stop_all()
   for _, client in ipairs(vim.lsp.get_clients({ name = M.NAME, _uninitialized = true })) do
+    stopping[client.id] = true
     client:stop(true)
   end
 end
