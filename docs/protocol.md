@@ -344,6 +344,18 @@ Only one adapter per environment: every adapter holds its own debugger hub
 connection, and an older armed one takes the next break. Kill adapters on
 exit.
 
+Quirks a generic DAP client trips over (verified with nvim-dap):
+
+- Responses to `attach`, `launch` and `configurationDone` carry
+  `"command": null`. Clients that route response handlers by `command`
+  must put it back from the matching request.
+- Credentials from the environment only reach the adapter if the client passes
+  the environment to the process correctly (nvim-dap hands `options.env` to
+  `uv.spawn` unchanged, which wants a list of `KEY=VALUE` strings; a map is
+  ignored and the attach then fails with "Could not publish the package").
+- The `stopped` event comes right after `configurationDone`; `stackTrace`
+  before the client has asked for `threads` can return no frames.
+
 Custom events beyond DAP, which a client should handle:
 
 | Event | Body | Client action |
