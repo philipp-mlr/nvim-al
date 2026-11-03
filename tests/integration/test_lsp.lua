@@ -131,7 +131,7 @@ T["gd from test into the app's table source"] = function()
   wait_active(real .. "/test")
   cursor_on('Record "Gadget"')
   vim.cmd("normal! 9l") -- onto Gadget inside the quotes
-  require("nvim-al.definition").goto()
+  require("nvim-al.definition").jump()
   local want = real .. "/app/src/Gadget.Table.al"
   vim.wait(30000, function()
     return vim.api.nvim_buf_get_name(0) == want
@@ -153,7 +153,7 @@ T["gd into a symbol package opens a read-only preview"] = function()
   end, 200)
   cursor_on("Record Customer")
   vim.cmd("normal! 9l")
-  require("nvim-al.definition").goto()
+  require("nvim-al.definition").jump()
   vim.wait(30000, function()
     return vim.api.nvim_buf_get_name(0):find("^al%-preview://") ~= nil
   end, 100)

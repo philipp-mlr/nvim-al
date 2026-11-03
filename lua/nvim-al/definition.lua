@@ -145,7 +145,7 @@ end
 
 --- Go to the definition of the symbol under the cursor.
 ---@param bufnr? integer
-function M.goto(bufnr)
+function M.jump(bufnr)
   bufnr = bufnr or vim.api.nvim_get_current_buf()
   local client = any_client(bufnr)
   if not client then
@@ -181,7 +181,7 @@ function M.tagfunc(pattern, flags)
   if not flags:find("c", 1, true) then
     return vim.NIL -- only for cursor-based lookups; fall back otherwise
   end
-  M.goto(vim.api.nvim_get_current_buf())
+  M.jump(vim.api.nvim_get_current_buf())
   return {}
 end
 
@@ -191,7 +191,7 @@ function M.on_attach(bufnr)
   local existing = vim.fn.maparg("gd", "n", false, true)
   if vim.tbl_isempty(existing) or existing.buffer ~= 1 then
     vim.keymap.set("n", "gd", function()
-      M.goto(bufnr)
+      M.jump(bufnr)
     end, { buffer = bufnr, desc = "AL: go to definition" })
   end
   vim.bo[bufnr].tagfunc = "v:lua.require'nvim-al.definition'.tagfunc"

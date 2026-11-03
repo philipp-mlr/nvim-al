@@ -64,9 +64,14 @@ local T = MiniTest.new_set({
   },
 })
 
-T["file location: jumps to the file and range"] = MiniTest.new_set({ hooks = { pre_once = function() next_mode = "file" end } })
+T["file location: jumps to the file and range"] =
+  MiniTest.new_set({ hooks = {
+    pre_once = function()
+      next_mode = "file"
+    end,
+  } })
 T["file location: jumps to the file and range"]["case"] = function()
-  require("nvim-al.definition").goto(env.buf)
+  require("nvim-al.definition").jump(env.buf)
   wait_for(function()
     return vim.api.nvim_buf_get_name(0) == vim.env.FAKE_DEF_TARGET
   end)
@@ -83,9 +88,14 @@ T["file location: jumps to the file and range"]["case"] = function()
   eq(req.textDocumentPositionParams.textDocument.uri, vim.uri_from_bufnr(env.buf))
 end
 
-T["al-preview location: read-only al buffer without CR"] = MiniTest.new_set({ hooks = { pre_once = function() next_mode = "preview" end } })
+T["al-preview location: read-only al buffer without CR"] =
+  MiniTest.new_set({ hooks = {
+    pre_once = function()
+      next_mode = "preview"
+    end,
+  } })
 T["al-preview location: read-only al buffer without CR"]["case"] = function()
-  require("nvim-al.definition").goto(env.buf)
+  require("nvim-al.definition").jump(env.buf)
   local want = "al-preview://allang/Base Application/Table/18/Customer.al"
   wait_for(function()
     return vim.api.nvim_buf_get_name(0) == want
@@ -106,7 +116,12 @@ T["al-preview location: read-only al buffer without CR"]["case"] = function()
   eq(vim.lsp.get_clients({ bufnr = b, name = "nvim-al" })[1].id, env.client.id)
 end
 
-T[":edit al-preview:// works through BufReadCmd"] = MiniTest.new_set({ hooks = { pre_once = function() next_mode = "preview" end } })
+T[":edit al-preview:// works through BufReadCmd"] =
+  MiniTest.new_set({ hooks = {
+    pre_once = function()
+      next_mode = "preview"
+    end,
+  } })
 T[":edit al-preview:// works through BufReadCmd"]["case"] = function()
   vim.cmd("edit al-preview://allang/X/Codeunit/1/Y.al")
   local b = vim.api.nvim_get_current_buf()
@@ -116,27 +131,42 @@ T[":edit al-preview:// works through BufReadCmd"]["case"] = function()
   eq(vim.api.nvim_buf_get_lines(b, 0, 1, false)[1], "table 18 Customer")
 end
 
-T[".dal location opens the .dal file next to the target"] = MiniTest.new_set({ hooks = { pre_once = function() next_mode = "dal" end } })
+T[".dal location opens the .dal file next to the target"] =
+  MiniTest.new_set({ hooks = {
+    pre_once = function()
+      next_mode = "dal"
+    end,
+  } })
 T[".dal location opens the .dal file next to the target"]["case"] = function()
   local dal = vim.fs.dirname(vim.env.FAKE_DEF_TARGET) .. "/Thing.dal"
   vim.fn.writefile({ "x", "y", "z", "    abcdefgh" }, dal)
-  require("nvim-al.definition").goto(env.buf)
+  require("nvim-al.definition").jump(env.buf)
   wait_for(function()
     return vim.api.nvim_buf_get_name(0) == dal
   end)
   eq(vim.api.nvim_buf_get_name(0), dal)
 end
 
-T["no result: notify"] = MiniTest.new_set({ hooks = { pre_once = function() next_mode = "none" end } })
+T["no result: notify"] =
+  MiniTest.new_set({ hooks = {
+    pre_once = function()
+      next_mode = "none"
+    end,
+  } })
 T["no result: notify"]["case"] = function()
-  require("nvim-al.definition").goto(env.buf)
+  require("nvim-al.definition").jump(env.buf)
   wait_for(function()
     return #env.notes > 0
   end)
   eq(env.notes[#env.notes].msg, "No definition found")
 end
 
-T["gd is mapped buffer-locally on attach, tagfunc set"] = MiniTest.new_set({ hooks = { pre_once = function() next_mode = "file" end } })
+T["gd is mapped buffer-locally on attach, tagfunc set"] =
+  MiniTest.new_set({ hooks = {
+    pre_once = function()
+      next_mode = "file"
+    end,
+  } })
 T["gd is mapped buffer-locally on attach, tagfunc set"]["case"] = function()
   local map = vim.fn.maparg("gd", "n", false, true)
   eq(map.buffer, 1)
@@ -151,7 +181,7 @@ T["al-preview .dal location stays a preview"] = MiniTest.new_set({
   },
 })
 T["al-preview .dal location stays a preview"]["case"] = function()
-  require("nvim-al.definition").goto(env.buf)
+  require("nvim-al.definition").jump(env.buf)
   local want = "al-preview://allang/app/Table/18/Customer.dal"
   wait_for(function()
     return vim.api.nvim_buf_get_name(0) == want
