@@ -1,0 +1,173 @@
+*nvim-al.txt*  Business Central AL development, the way VS Code does it
+
+==============================================================================
+CONTENTS                                                    *nvim-al-contents*
+
+  1. Introduction ............................ |nvim-al-intro|
+  2. Requirements ............................ |nvim-al-requirements|
+  3. Setup ................................... |nvim-al-setup|
+  4. Workspaces and settings ................. |nvim-al-workspaces|
+  5. Commands ................................ |nvim-al-commands|
+  6. Debugging ............................... |nvim-al-debugging|
+  7. Hooks ................................... |nvim-al-hooks|
+  8. Statusline .............................. |nvim-al-statusline|
+  9. Troubleshooting ......................... |nvim-al-troubleshooting|
+
+==============================================================================
+1. INTRODUCTION                                                *nvim-al-intro*
+
+nvim-al runs the language server and debug adapter of Microsoft's AL Language
+extension for VS Code and talks to them the way VS Code does: same workspace
+model, same settings, same project closure. Open any .al file in a repository
+or worktree and you get diagnostics from the compiler and every configured
+analyzer, code actions, completion, hover, go to definition (including
+read-only previews of symbol-package objects), references, rename and
+formatting. Builds, publishing, symbols, tests and debugging are commands.
+
+nvim-al has no UI of its own: quickfix, |vim.ui.select|, |vim.ui.input| and
+|vim.notify| are the UI. It does not depend on any other plugin except
+nvim-dap, and only for debugging.
+
+==============================================================================
+2. REQUIREMENTS                                         *nvim-al-requirements*
+
+- Neovim 0.11 or newer.
+- .NET 10 with ASP.NET Core: `dotnet --list-runtimes` must show both
+  Microsoft.NETCore.App 10.x and Microsoft.AspNetCore.App 10.x.
+- The AL Language extension (ms-dynamics-smb.al) version 30.0 or newer:
+  installed in VS Code, or an unzipped .vsix anywhere on disk.
+- Optional: nvim-dap for debugging.
+
+Check everything with `:checkhealth nvim-al`.
+
+==============================================================================
+3. SETUP                                                       *nvim-al-setup*
+
+Install the plugin with any plugin manager. Calling setup() is optional; the
+defaults work when the extension is installed in VS Code.
+>lua
+    require("nvim-al").setup({
+      -- AL extension root; default: $NVIM_AL_EXTENSION, then the newest
+      -- ms-dynamics-smb.al-* in ~/.vscode/extensions (and -server, -insiders,
+      -- ~/.cursor). May point at an unzipped .vsix or its extension/ folder.
+      extension_path = nil,
+      dotnet = "dotnet",
+      -- Directory substituted for ${analyzerFolder} in al.codeAnalyzers.
+      -- Needed when the extension directory is read-only (Nix) and third-party
+      -- analyzers such as ALCops live elsewhere.
+      analyzer_folder = nil,
+      -- User-level al.* settings (the place VS Code's user settings.json
+      -- would be). Workspace and folder settings override them.
+      settings = {},
+      hooks = {}, -- see |nvim-al-hooks|
+    })
+<
+Buffer-local on attach: `gd` (unless you mapped it) and 'tagfunc' use AL go
+to definition. All other LSP features work through Neovim's defaults
+(|lsp-defaults|).
+
+==============================================================================
+4. WORKSPACES AND SETTINGS                                *nvim-al-workspaces*
+
+From the current file nvim-al walks up to the git root (a `.git` directory or
+file, so worktrees work). The nearest app.json is the project. Every
+*.code-workspace file on the way that lists the project is a candidate; the
+outermost one wins (ties: alphabetical). Without one, the project folder is a
+workspace on its own.
+
+One language server runs per workspace. The active project follows the
+current buffer; switching between projects is cheap.
+
+Settings are resolved per folder like VS Code: extension defaults < `settings`
+from setup() < the workspace file's "settings" < the folder's
+.vscode/settings.json. Values are passed to the server unresolved; the server
+expands ${workspaceFolder}, ${CodeCop} and friends.
+
+Launch configurations come from the folder's .vscode/launch.json, then the
+workspace file's "launch" section (or the launch hook).
+
+==============================================================================
+5. COMMANDS                                                 *nvim-al-commands*
+
+                                                                      *:AL*
+:AL info            Toolchain, workspace, folders, active project, closure
+                    and the effective settings of the current folder.
+:AL build           Build the current project with the language server.
+                    Errors land in quickfix.
+:AL compile[!]      Compile every project of the workspace with altool, using
+                    the workspace-level analyzers and ruleset. Errors and
+                    warnings land in quickfix. With ! the build log opens.
+:AL publish         Build, then publish the .app to the target.
+:AL symbols         Download symbols from the target.
+:AL symbols global  Download symbols from Microsoft's NuGet feeds.
+:AL test [id [method]]
+                    Run the test at the cursor (method in a [Test]
+                    procedure, else the codeunit), or the given one, on the
+                    target. Failures land in quickfix. Publish first.
+:AL debug           Start debugging (nvim-dap).
+:AL target          Pick the target again (see below).
+:AL restart         Restart the language server of this workspace.
+
+The target is the launch configuration used by publish, symbols, tests and
+debugging. nvim-al asks once per project when several exist and remembers the
+answer for the session.
+
+Credentials: v1 supports UserPassword and Windows authentication. When
+BC_SERVER_USERNAME and BC_SERVER_PASSWORD are set they are used; otherwise
+nvim-al asks once per server and keeps the answer in memory. Credentials are
+never written to disk.
+
+==============================================================================
+6. DEBUGGING                                               *nvim-al-debugging*
+
+With nvim-dap installed, nvim-al registers the `al` adapter and a
+configuration provider. `:AL debug` or nvim-dap's own continue() offers the
+configurations of the current project.
+
+For attach with "breakOnNext", start the action you want to debug after the
+adapter reports "Debugger will attach to the next session". Only one AL
+debug session per environment works at a time.
+
+==============================================================================
+7. HOOKS                                                       *nvim-al-hooks*
+
+Hooks adapt nvim-al to a repository without changing the plugin. Put them in
+the repository's .nvim.lua (see 'exrc') or in your config.
+
+`workspace_file(project, candidates)`  -> path|nil
+    Choose the workspace file among the candidates.
+`settings(folder, settings)`           -> settings
+    Adjust the resolved al.* settings of a folder before they are sent.
+`build(ctx)`, `compile(ctx)`, `publish(ctx)`, `test(ctx)` -> handled?
+    Replace a command. Return true when you handled it. ctx has `ws`,
+    `folder`, `cfg`, `bufnr`; for test also `test = { codeunit, method }`.
+`launch(folder)`                       -> configurations
+    Provide launch configurations instead of launch.json.
+
+Example: route the workspace compile to a repository script.
+>lua
+    require("nvim-al").setup({
+      hooks = {
+        compile = function(ctx)
+          vim.cmd("botright split | terminal ./scripts/compile")
+          return true
+        end,
+      },
+    })
+<
+==============================================================================
+8. STATUSLINE                                             *nvim-al-statusline*
+
+`require("nvim-al").status(bufnr)` returns
+`{ workspace, folder, loaded, building }`. Server progress arrives as the
+User event `NvimAlProgress` with `data.progress`.
+
+==============================================================================
+9. TROUBLESHOOTING                                   *nvim-al-troubleshooting*
+
+- Run `:checkhealth nvim-al` and `:AL info`.
+- No diagnostics: check that al.packageCachePath points at your symbols and
+  that the closure in `:AL info` looks right. `:AL symbols` downloads them.
+- The protocol notes in docs/protocol.md describe exactly what nvim-al sends.
+
+ vim:tw=78:ts=8:ft=help:norl:

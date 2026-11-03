@@ -14,4 +14,15 @@ codeunit 50150 "Gadget Test"
         if GadgetMgt.Describe('G1') <> 'Thing' then
             Error('unexpected');
     end;
+
+    [Test]
+    procedure SecondTest()
+    begin
+        // cursor tests put the cursor in here
+        Error('unexpected');
+    end;
+
+    local procedure Helper()
+    begin
+    end;
 }

@@ -256,7 +256,7 @@ local function start(ws, bufnr)
   if not cmd then
     -- scheduled: an ERROR notify raises inside FileType autocmds otherwise
     vim.schedule(function()
-      util.notify_once("toolchain", err, vim.log.levels.ERROR)
+      util.notify_once("toolchain:" .. tostring(err), err, vim.log.levels.ERROR)
     end)
     return nil
   end

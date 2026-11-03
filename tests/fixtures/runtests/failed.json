@@ -1,0 +1,18 @@
+{
+  "succeeded": false,
+  "message": "===== Codeunit 50150 =====\nTest run completed: 1 passed, 1 failed, 0 skipped.",
+  "data": {
+    "success": false,
+    "passed": 1,
+    "failed": 1,
+    "skipped": 0,
+    "total": 2,
+    "results": [
+      { "codeunitId": 50150, "methodName": "DescribeReturnsDescription", "status": "passed", "output": "", "durationMs": 12 },
+      { "codeunitId": 50150, "methodName": "SecondTest", "status": "failed", "output": "Assert.AreEqual failed. Expected:<Thing> (Text). Actual:<> (Text). unexpected", "durationMs": 30 },
+      { "codeunitId": 50150, "methodName": "", "status": "failed", "output": "", "durationMs": 42 }
+    ]
+  },
+  "nextSteps": [],
+  "warnings": []
+}

@@ -1,0 +1,29 @@
+{
+  "succeeded": true,
+  "message": "===== Codeunit 50633 =====\nTest run completed: 2 passed, 0 failed, 0 skipped.\n\nResults:\n  PASS ReturnFullInvoiceLine (723ms)\n  PASS  (723ms)\n\nTest run completed: 2 passed, 0 failed, 0 skipped.",
+  "data": {
+    "success": true,
+    "passed": 2,
+    "failed": 0,
+    "skipped": 0,
+    "total": 2,
+    "results": [
+      {
+        "codeunitId": 50633,
+        "methodName": "ReturnFullInvoiceLine",
+        "status": "passed",
+        "output": "",
+        "durationMs": 723
+      },
+      {
+        "codeunitId": 50633,
+        "methodName": "",
+        "status": "passed",
+        "output": "",
+        "durationMs": 723
+      }
+    ]
+  },
+  "nextSteps": [],
+  "warnings": []
+}

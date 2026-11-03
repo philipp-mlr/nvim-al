@@ -55,6 +55,17 @@ vim.api.nvim_create_autocmd("BufWritePost", {
   end,
 })
 
+vim.api.nvim_create_user_command("AL", function(opts)
+  require("nvim-al.commands").run(opts)
+end, {
+  nargs = "*",
+  bang = true,
+  desc = "nvim-al: info, build, compile[!], publish, symbols [global], test [id [method]], debug, target, restart",
+  complete = function(...)
+    return require("nvim-al.commands").complete(...)
+  end,
+})
+
 vim.api.nvim_create_autocmd("VimLeavePre", {
   group = group,
   callback = function()
