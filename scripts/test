@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Run the unit tests headless with mini.test.
+#   scripts/test                         all tests/unit/test_*.lua
+#   scripts/test tests/unit/test_x.lua   one file
+#   NVIM_AL_INTEGRATION=1 scripts/test tests/integration/test_lsp.lua
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+if [ $# -gt 0 ]; then
+  files=$(printf '"%s",' "$@")
+else
+  files=$(find tests/unit -name 'test_*.lua' | sort | sed 's/.*/"&",/' | tr -d '\n')
+fi
+
+exec nvim --headless --noplugin -u tests/minimal_init.lua \
+  -c "lua MiniTest.run({ collect = { find_files = function() return { ${files} } end }, execute = { reporter = MiniTest.gen_reporter.stdout({ group_depth = 2 }) } })"

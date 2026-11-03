@@ -1,0 +1,25 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Attach local",
+      "type": "al",
+      "request": "attach",
+      "server": "http://localhost",
+      "serverInstance": "BC",
+      "authentication": "UserPassword",
+      "environmentType": "Sandbox",
+      "tenant": "default",
+      "breakOnError": "ExcludeTry",
+    },
+    {
+      "name": "Cloud sandbox",
+      "type": "al",
+      "request": "launch",
+      "environmentType": "Sandbox",
+      "environmentName": "sandbox",
+      "authentication": "AAD",
+    },
+    { "name": "Not AL", "type": "node", "request": "launch" },
+  ],
+}

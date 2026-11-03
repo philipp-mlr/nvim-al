@@ -1,0 +1,4 @@
+{
+  // folder override
+  "al.ruleSetPath": "./b.ruleset.json"
+}

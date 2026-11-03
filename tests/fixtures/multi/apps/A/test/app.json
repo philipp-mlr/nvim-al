@@ -1,0 +1,4 @@
+{
+  "id": "aaaaaaaa-0000-0000-0000-000000000002", "name": "A Test", "publisher": "Fixture", "version": "1.0.0.0",
+  "dependencies": [ { "id": "aaaaaaaa-0000-0000-0000-000000000001", "name": "A", "publisher": "Fixture", "version": "1.0.0.0" } ]
+}

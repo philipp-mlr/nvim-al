@@ -1,0 +1,12 @@
+{
+  // all projects
+  "folders": [
+    { "path": "apps/A/app", "name": "A" },
+    { "path": "apps/A/test", "name": "A - Test" },
+    { "path": "apps/B/app" },
+  ],
+  "settings": {
+    "al.codeAnalyzers": ["${CodeCop}"],
+    "al.ruleSetPath": "${workspaceFolder}/../../../ws.ruleset.json",
+  },
+}
