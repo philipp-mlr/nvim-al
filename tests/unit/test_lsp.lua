@@ -1,0 +1,267 @@
+local H = require("helpers")
+local eq = MiniTest.expect.equality
+
+local env -- per-case state
+
+local function read_log()
+  local out = {}
+  local f = io.open(env.log, "r")
+  if not f then
+    return out
+  end
+  for line in f:lines() do
+    out[#out + 1] = vim.json.decode(line)
+  end
+  f:close()
+  return out
+end
+
+-- Protocol messages only: textDocument/* sync traffic is Neovim's own and may interleave.
+local function methods(log)
+  local out = {}
+  for _, m in ipairs(log) do
+    if not (m.method or ""):match("^textDocument/") then
+      out[#out + 1] = m.method or "<response>"
+    end
+  end
+  return out
+end
+
+local function clients()
+  return vim.lsp.get_clients({ name = "nvim-al", _uninitialized = true })
+end
+
+local function count(log, method)
+  local n = 0
+  for _, m in ipairs(log) do
+    if m.method == method then
+      n = n + 1
+    end
+  end
+  return n
+end
+
+local function wait_for(pred, ms)
+  return vim.wait(ms or 5000, pred, 20)
+end
+
+local hooks = {
+  pre_case = function()
+    for _, mod in ipairs({ "nvim-al", "nvim-al.lsp", "nvim-al.workspace" }) do
+      package.loaded[mod] = nil
+    end
+    env = { log = vim.fn.tempname(), notes = {} }
+    vim.env.FAKE_LOG = env.log
+    vim.env.FAKE_DELAY_MS = "200"
+    vim.env.FAKE_EXIT_CODE = nil
+    vim.env.FAKE_ASK_LOADED = nil
+    local util = require("nvim-al.util")
+    env.orig_notify = vim.notify
+    vim.notify = function(msg, level)
+      table.insert(env.notes, { msg = msg, level = level })
+    end
+    require("nvim-al").setup({
+      _host_cmd = { vim.v.progpath, "-l", H.root .. "/tests/fake_server.lua" },
+    })
+    env.util = util
+  end,
+  post_case = function()
+    for _, c in ipairs(vim.lsp.get_clients({ name = "nvim-al", _uninitialized = true })) do
+      c:stop(true)
+    end
+    wait_for(function()
+      return #vim.lsp.get_clients({ name = "nvim-al", _uninitialized = true }) == 0
+    end, 3000)
+    vim.cmd("silent! %bwipeout!")
+    vim.notify = env.orig_notify
+  end,
+}
+local T = MiniTest.new_set({ hooks = hooks })
+
+local function open(path)
+  vim.cmd("edit " .. vim.fn.fnameescape(path))
+  local buf = vim.api.nvim_get_current_buf()
+  return require("nvim-al.lsp").attach(buf), buf
+end
+
+local function settle(n_set_active)
+  wait_for(function()
+    return count(read_log(), "al/setActiveWorkspace") >= n_set_active
+  end)
+  -- let the delayed response and any queued switch go through
+  vim.wait(400)
+end
+
+T["startup sequence"] = function()
+  local multi = H.fixture("multi")
+  local client = open(multi .. "/apps/A/app/src/A_app.Codeunit.al")
+  eq(client ~= nil, true)
+  settle(1)
+  local log = vim.tbl_filter(function(m)
+    return not (m.method or ""):match("^textDocument/")
+  end, read_log())
+  eq(vim.list_slice(methods(log), 1, 6), {
+    "initialize",
+    "initialized",
+    "al/loadManifest",
+    "al/loadManifest",
+    "al/loadManifest",
+    "al/setActiveWorkspace",
+  })
+  local sw = log[6].params
+  eq(sw.currentWorkspaceFolderPath.name, "A")
+  eq(sw.currentWorkspaceFolderPath.index, 0)
+  eq(sw.currentWorkspaceFolderPath.uri, vim.uri_from_fname(multi .. "/apps/A/app"))
+  eq(sw.settings.workspacePath, multi .. "/apps/A/app")
+  eq(sw.settings.setActiveWorkspace, true)
+  local init = log[1].params
+  eq(#init.workspaceFolders, 3)
+  eq(init.rootPath, multi .. "/apps/A/app")
+  local st = require("nvim-al.lsp").state(client.id)
+  eq(st.active, multi .. "/apps/A/app")
+end
+
+T["switching to another project sends active + dependency configuration"] = function()
+  local multi = H.fixture("multi")
+  open(multi .. "/apps/A/app/src/A_app.Codeunit.al")
+  settle(1)
+  open(multi .. "/apps/B/app/src/B_app.Codeunit.al")
+  settle(2)
+  local log = read_log()
+  local sets, dcc = {}, {}
+  for _, m in ipairs(log) do
+    if m.method == "al/setActiveWorkspace" then
+      sets[#sets + 1] = m.params
+    elseif m.method == "workspace/didChangeConfiguration" then
+      dcc[#dcc + 1] = m.params
+    end
+  end
+  eq(#sets, 2)
+  eq(sets[2].settings.workspacePath, multi .. "/apps/B/app")
+  eq(sets[2].settings.activeWorkspaceClosure, { multi .. "/apps/B/app", multi .. "/apps/A/app" })
+  eq(#dcc, 1)
+  eq(dcc[1].settings.workspacePath, multi .. "/apps/A/app")
+  eq(dcc[1].settings.setActiveWorkspace, false)
+  eq(dcc[1].settings.dependencyParentWorkspacePath, multi .. "/apps/B/app")
+end
+
+T["same folder does not re-send"] = function()
+  local multi = H.fixture("multi")
+  local client = open(multi .. "/apps/A/app/src/A_app.Codeunit.al")
+  settle(1)
+  require("nvim-al.lsp").switch(client, require("nvim-al.lsp").state(client.id).ws.folders[1])
+  vim.wait(400)
+  eq(count(read_log(), "al/setActiveWorkspace"), 1)
+end
+
+T["rapid switching coalesces, last folder wins"] = function()
+  local multi = H.fixture("multi")
+  local lsp = require("nvim-al.lsp")
+  local client = open(multi .. "/apps/A/app/src/A_app.Codeunit.al")
+  settle(1)
+  local ws = lsp.state(client.id).ws
+  local A, B = ws.folders[1], ws.folders[3]
+  for _, f in ipairs({ A, B, A, B, A, B, A }) do
+    lsp.switch(client, f)
+  end
+  vim.wait(1200)
+  local sets = vim.tbl_filter(function(m)
+    return m.method == "al/setActiveWorkspace"
+  end, read_log())
+  -- the first (startup) plus at most 2 more
+  eq(#sets <= 3, true)
+  eq(lsp.state(client.id).active, A.path)
+end
+
+T["two fixture copies get two clients"] = function()
+  local a, b = H.fixture("multi"), H.fixture("multi")
+  local ca = open(a .. "/apps/A/app/src/A_app.Codeunit.al")
+  local cb = open(b .. "/apps/A/app/src/A_app.Codeunit.al")
+  eq(ca.id ~= cb.id, true)
+  eq(#clients(), 2)
+end
+
+T["server crash: one error, no restart"] = function()
+  vim.env.FAKE_EXIT_CODE = "3"
+  local multi = H.fixture("multi")
+  open(multi .. "/apps/A/app/src/A_app.Codeunit.al")
+  wait_for(function()
+    return #clients() == 0
+  end)
+  vim.wait(300)
+  eq(#clients(), 0)
+  -- Neovim itself also warns "Client nvim-al quit with exit code 3" (WARN, not suppressible);
+  -- nvim-al adds exactly one ERROR with the way out.
+  local errors = vim.tbl_filter(function(n)
+    return n.level == vim.log.levels.ERROR and n.msg:find("code 3", 1, true) ~= nil
+  end, env.notes)
+  eq(#errors, 1)
+  eq(errors[1].msg, "nvim-al: language server exited with code 3; :AL restart to try again")
+end
+
+T["al/activeProjectLoaded is answered with null"] = function()
+  vim.env.FAKE_ASK_LOADED = "1"
+  local multi = H.fixture("multi")
+  local client = open(multi .. "/apps/A/app/src/A_app.Codeunit.al")
+  local resp
+  wait_for(function()
+    for _, m in ipairs(read_log()) do
+      if m.id == 1001 and m.method == nil then
+        resp = m
+        return true
+      end
+    end
+  end)
+  eq(resp ~= nil, true)
+  eq(resp.result, vim.NIL)
+  eq(require("nvim-al.lsp").state(client.id).loaded, true)
+end
+
+T["file without app.json: no client, one notice"] = function()
+  local loose = H.fixture("loose")
+  local c1 = open(loose .. "/x.al")
+  local c2 = require("nvim-al.lsp").attach(vim.api.nvim_get_current_buf())
+  eq(c1, nil)
+  eq(c2, nil)
+  eq(#clients(), 0)
+  local hits = vim.tbl_filter(function(n)
+    return n.msg == "nvim-al: no app.json found for " .. loose .. "/x.al"
+  end, env.notes)
+  eq(#hits, 1)
+end
+
+T["completion item labels are flattened to strings"] = function()
+  local multi = H.fixture("multi")
+  local client, buf = open(multi .. "/apps/A/app/src/A_app.Codeunit.al")
+  settle(1)
+  local res = client:request_sync("textDocument/completion", {
+    textDocument = { uri = vim.uri_from_bufnr(buf) },
+    position = { line = 0, character = 0 },
+  }, 5000, buf)
+  local items = res.result.items
+  eq(items[1].label, '"No." (PK1)')
+  eq(items[2].label, "Description")
+  local got
+  client:request("textDocument/completion", {
+    textDocument = { uri = vim.uri_from_bufnr(buf) },
+    position = { line = 0, character = 0 },
+  }, function(_, result)
+    got = result
+  end, buf)
+  wait_for(function()
+    return got ~= nil
+  end)
+  eq(got.items[1].label, '"No." (PK1)')
+end
+
+T["status reports workspace and folder"] = function()
+  local multi = H.fixture("multi")
+  local _, buf = open(multi .. "/apps/A/test/src/A_test.Codeunit.al")
+  settle(1)
+  local s = require("nvim-al").status(buf)
+  eq(s.workspace, multi .. "/all.code-workspace")
+  eq(s.folder, multi .. "/apps/A/test")
+  eq(s.building, false)
+end
+
+return T

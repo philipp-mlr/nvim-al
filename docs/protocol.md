@@ -76,6 +76,13 @@ document symbols, workspace symbols, code actions, formatting, range
 formatting, rename, implementation, type hierarchy, completion, signature
 help. **`definitionProvider: false`**: see 2.6.
 
+**Completion item labels are objects**, not strings (verified on 30.0):
+`"label": { "label": "\"No.\" (PK1)", "description": "" }`. This breaks the
+LSP spec and every completion engine. A client has to replace `label` with
+`label.label` before passing items on. nvim-al does this by wrapping the client's
+`request` method, so built-in completion, nvim-cmp and blink all receive
+strings.
+
 ### 2.3 Workspace model
 
 The server does not read `.code-workspace` files. The client owns the model:

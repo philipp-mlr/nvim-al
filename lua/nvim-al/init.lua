@@ -18,4 +18,24 @@ function M.config()
   return current
 end
 
+--- State for statuslines.
+---@param bufnr integer|nil
+---@return { workspace: string|nil, folder: string|nil, loaded: boolean, building: boolean }
+function M.status(bufnr)
+  bufnr = bufnr or vim.api.nvim_get_current_buf()
+  local out = { workspace = nil, folder = nil, loaded = false, building = M._building == true }
+  local lsp = require("nvim-al.lsp")
+  local client = lsp.client_for(bufnr)
+  local st = client and lsp.state(client.id)
+  if st then
+    out.workspace = st.ws.key
+    out.loaded = st.loaded
+    local name = vim.api.nvim_buf_get_name(bufnr)
+    name = vim.uv.fs_realpath(name) or name
+    local f = require("nvim-al.workspace").folder_for(st.ws, name)
+    out.folder = f and f.path or nil
+  end
+  return out
+end
+
 return M

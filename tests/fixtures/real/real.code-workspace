@@ -1,0 +1,9 @@
+{
+  "folders": [ { "path": "app" }, { "path": "test" } ],
+  "settings": {
+    "al.codeAnalyzers": ["${CodeCop}"],
+    "al.enableCodeAnalysis": true,
+    "al.backgroundCodeAnalysis": "Project",
+    "al.assemblyProbingPaths": []
+  }
+}
