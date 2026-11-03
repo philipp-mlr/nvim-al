@@ -270,6 +270,9 @@ local function start(ws, bufnr)
     -- Neovim answers server->client requests without a handler with MethodNotFound,
     -- which the server accepts as an answer (protocol §2.9).
     _nvim_al_key = ws.key,
+    on_attach = function(_, b)
+      require("nvim-al.definition").on_attach(b)
+    end,
     on_init = function(client)
       local st = {
         ws = ws,

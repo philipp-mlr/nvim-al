@@ -72,6 +72,29 @@ local function handle(msg)
       id = msg.id,
       result = { success = true, manifest = msg.params.manifest },
     })
+  elseif m == "al/gotodefinition" then
+    local mode = os.getenv("FAKE_DEF") or "file"
+    local target = os.getenv("FAKE_DEF_TARGET")
+    local range = { start = { line = 2, character = 4 }, ["end"] = { line = 2, character = 9 } }
+    local result = vim.NIL
+    if mode == "file" then
+      result = { uri = vim.uri_from_fname(target), range = range }
+    elseif mode == "preview" then
+      result = { uri = "al-preview://allang/Base Application/Table/18/Customer.al", range = range }
+    elseif mode == "preview_dal" then
+      result = { uri = "al-preview://allang/app/Table/18/Customer.dal", range = range }
+    elseif mode == "dal" then
+      result = { uri = vim.uri_from_fname(vim.fs.dirname(target)) .. "/Thing.dal", range = range }
+    end
+    send({ jsonrpc = "2.0", id = msg.id, result = result })
+  elseif m == "al/previewDocument" then
+    send({
+      jsonrpc = "2.0",
+      id = msg.id,
+      result = {
+        content = "table 18 Customer\r\n{\r\n    // preview of " .. msg.params.Uri .. "\r\n}\r\n",
+      },
+    })
   elseif m == "textDocument/completion" then
     send({
       jsonrpc = "2.0",

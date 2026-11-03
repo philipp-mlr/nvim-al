@@ -196,8 +196,11 @@ al/gotodefinition {
 
 `uri` is either `file://…` or `al-preview://…` (an object inside a symbol
 package). Fetch preview content with `al/previewDocument { Uri: <uri> }` →
-`{ content }` and show it read-only. A `.dal` result needs its last path
-segment joined back onto the parsed parent URI.
+`{ content }` (CRLF line endings) and show it read-only. Symbol-package
+objects come back as `al-preview://allang/<package>/<Type>/<id>/<Name>.dal`;
+a `file://…/<Name>.dal` result needs its last path segment joined back onto
+the parsed parent URI. Verified: a jump to `Record Customer` returns
+`al-preview://allang/app/Table/18/Customer.dal`, about 5,000 lines of source.
 
 ### 2.7 Diagnostics
 

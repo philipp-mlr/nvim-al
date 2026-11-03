@@ -39,6 +39,14 @@ vim.api.nvim_create_autocmd("FileType", {
   end,
 })
 
+vim.api.nvim_create_autocmd("BufReadCmd", {
+  group = group,
+  pattern = "al-preview://*",
+  callback = function(args)
+    require("nvim-al.definition").load_preview(args.buf, args.match)
+  end,
+})
+
 vim.api.nvim_create_autocmd("BufWritePost", {
   group = group,
   pattern = { "app.json", "*.code-workspace", "*/.vscode/settings.json" },
