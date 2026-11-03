@@ -1,0 +1,34 @@
+{
+  "version": "0.2",
+  "toolInfo": { "toolName": "Microsoft (R) AL Compiler", "productVersion": "30.0.43", "fileVersion": "30.0.43" },
+  "issues": [
+    {
+      "ruleId": "AL0118",
+      "locations": [ { "analysisTarget": [ { "uri": "/abs/src/Mgt.Codeunit.al",
+        "region": { "startLine": 47, "startColumn": 9, "endLine": 47, "endColumn": 25 } } ] } ],
+      "fullMessage": "The name 'ThisDoesNotExist' does not exist in the current context.",
+      "properties": { "severity": "Error", "defaultSeverity": "Error", "category": "Compiler", "isSuppressedInSource": "False" }
+    },
+    {
+      "ruleId": "AA0137",
+      "locations": [ { "analysisTarget": [ { "uri": "/abs/src/Other.Codeunit.al",
+        "region": { "startLine": 5, "startColumn": 9, "endLine": 5, "endColumn": 15 } } ] } ],
+      "fullMessage": "Variable 'Unused' is unused in 'Describe'.",
+      "properties": { "severity": "Warning", "isSuppressedInSource": "False" }
+    },
+    {
+      "ruleId": "AA0218",
+      "locations": [ { "analysisTarget": [ { "uri": "/abs/src/Page.al",
+        "region": { "startLine": 1, "startColumn": 1, "endLine": 1, "endColumn": 2 } } ] } ],
+      "fullMessage": "Suppressed one.",
+      "properties": { "severity": "Warning", "isSuppressedInSource": "True" }
+    },
+    {
+      "ruleId": "AL0792",
+      "locations": [ { "analysisTarget": [ { "uri": "/abs/src/Info.al",
+        "region": { "startLine": 2, "startColumn": 3, "endLine": 2, "endColumn": 4 } } ] } ],
+      "fullMessage": "Info message.",
+      "properties": { "severity": "Info", "isSuppressedInSource": "False" }
+    }
+  ]
+}

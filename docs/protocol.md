@@ -103,10 +103,14 @@ The server does not read `.code-workspace` files. The client owns the model:
 3. Compute the **closure** of the active folder (2.5).
 4. Request `al/setActiveWorkspace { currentWorkspaceFolderPath: <folder object>, settings: <WorkspaceSettings> }`
    → `{ success: true }`.
-5. For each folder in the closure other than the active one, notify
-   `workspace/didChangeConfiguration { settings: <WorkspaceSettings for that folder> }` with
-   `setActiveWorkspace: false` and `dependencyParentWorkspacePath: <active folder path>`.
-   VS Code sends this once per (dependency, parent) pair.
+5. Walk the project references depth-first from the active folder. For every
+   (dependency, referencing project) pair, notify
+   `workspace/didChangeConfiguration { settings: <WorkspaceSettings for the dependency> }`
+   with `setActiveWorkspace: false` and `dependencyParentWorkspacePath` = the
+   project that references it **directly**, not the active folder. VS Code sends
+   this once per pair. Getting the parent wrong for a transitive dependency
+   silently stops all diagnostics: verified on a 49-folder workspace where the
+   active app has a 6-project closure.
 
 The payload **must** be wrapped as `{ currentWorkspaceFolderPath, settings }`.
 With the settings fields at the top level the request fails without an
@@ -145,6 +149,13 @@ about 0.1 s once the closure is loaded. It does not re-index from scratch.
   "activeWorkspaceClosure": [ "<fs path>", "..." ]
 }
 ```
+
+**`${workspaceFolder}` resolves one level deeper than it looks**: the server
+treats it like a path to a file inside the folder, so `${workspaceFolder}/..`
+is the folder itself. Verified: with the package cache at `<folder>/../../.alpackages`,
+`${workspaceFolder}/../../../.alpackages` finds it and `${workspaceFolder}/../../.alpackages`
+does not. Workspaces that work in VS Code rely on this, so a client resolving
+these paths itself (e.g. for `altool`) must do the same.
 
 Settings are read **per folder** with VS Code's precedence: defaults → user
 settings → `.code-workspace` `settings` → the folder's `.vscode/settings.json`.

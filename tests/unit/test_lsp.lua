@@ -10,7 +10,11 @@ local function read_log()
     return out
   end
   for line in f:lines() do
-    out[#out + 1] = vim.json.decode(line)
+    -- the fake server may be mid-write: skip a partial last line
+    local ok, v = pcall(vim.json.decode, line)
+    if ok then
+      out[#out + 1] = v
+    end
   end
   f:close()
   return out
@@ -145,6 +149,42 @@ T["switching to another project sends active + dependency configuration"] = func
   eq(dcc[1].settings.dependencyParentWorkspacePath, multi .. "/apps/B/app")
 end
 
+T["transitive dependencies are configured with their referencing parent"] = function()
+  local multi = H.fixture("multi")
+  -- chain: A - Test -> B -> A
+  vim.fn.writefile({
+    vim.json.encode({
+      id = "aaaaaaaa-0000-0000-0000-000000000002",
+      name = "A Test",
+      publisher = "Fixture",
+      version = "1.0.0.0",
+      dependencies = {
+        {
+          id = "bbbbbbbb-0000-0000-0000-000000000001",
+          name = "B",
+          publisher = "Fixture",
+          version = "2.0.0.0",
+        },
+      },
+    }),
+  }, multi .. "/apps/A/test/app.json")
+  open(multi .. "/apps/A/test/src/A_test.Codeunit.al")
+  settle(1)
+  local dcc = {}
+  for _, m in ipairs(read_log()) do
+    if m.method == "workspace/didChangeConfiguration" then
+      dcc[#dcc + 1] = {
+        path = m.params.settings.workspacePath,
+        parent = m.params.settings.dependencyParentWorkspacePath,
+      }
+    end
+  end
+  eq(dcc, {
+    { path = multi .. "/apps/B/app", parent = multi .. "/apps/A/test" },
+    { path = multi .. "/apps/A/app", parent = multi .. "/apps/B/app" },
+  })
+end
+
 T["same folder does not re-send"] = function()
   local multi = H.fixture("multi")
   local client = open(multi .. "/apps/A/app/src/A_app.Codeunit.al")
@@ -252,6 +292,19 @@ T["completion item labels are flattened to strings"] = function()
     return got ~= nil
   end)
   eq(got.items[1].label, '"No." (PK1)')
+end
+
+T["missing dotnet: no error raised, one scheduled error notice"] = function()
+  require("nvim-al").setup({ dotnet = "/nonexistent/dotnet" })
+  local multi = H.fixture("multi")
+  local ok, err = pcall(open, multi .. "/apps/A/app/src/A_app.Codeunit.al")
+  eq(ok, true, err)
+  vim.wait(200)
+  local errs = vim.tbl_filter(function(n)
+    return n.level == vim.log.levels.ERROR and n.msg:find("dotnet", 1, true) ~= nil
+  end, env.notes)
+  eq(#errs, 1)
+  eq(#clients(), 0)
 end
 
 T["status reports workspace and folder"] = function()

@@ -66,24 +66,28 @@ local function server_args(ws)
   return args
 end
 
+--- Configure every project reference of the active folder, walking the
+--- reference graph depth-first; each dependency's parent is the project that
+--- references it directly (as VS Code's loadProjectReferences does).
 local function send_dependencies(client, st, active_folder)
-  for _, path in ipairs(closure.closure(st.ws, active_folder)) do
-    if path ~= active_folder.path then
-      local key = path .. "|" .. active_folder.path
+  local visited = {}
+  local function walk(parent)
+    if visited[parent.path] then
+      return
+    end
+    visited[parent.path] = true
+    for _, dep in ipairs(closure.references(st.ws, parent)) do
+      local key = dep.path .. "|" .. parent.path
       if not st.deps_sent[key] then
         st.deps_sent[key] = true
-        local dep = workspace.folder_for(st.ws, path)
         client:notify("workspace/didChangeConfiguration", {
-          settings = settings.payload(
-            st.ws,
-            dep,
-            cfg(),
-            { active = false, parent = active_folder.path }
-          ),
+          settings = settings.payload(st.ws, dep, cfg(), { active = false, parent = parent.path }),
         })
       end
+      walk(dep)
     end
   end
+  walk(active_folder)
 end
 
 --- Make `folder` the active project (protocol §2.4 steps 4 and 5).
@@ -244,13 +248,16 @@ local function start(ws, bufnr)
   else
     local ok, rerr = toolchain.check_runtime(c)
     if not ok then
-      util.notify_once("runtime", rerr, vim.log.levels.ERROR)
-      return nil
+      cmd, err = nil, rerr
+    else
+      cmd, err = toolchain.host_cmd(c, server_args(ws))
     end
-    cmd, err = toolchain.host_cmd(c, server_args(ws))
   end
   if not cmd then
-    util.notify_once("toolchain", err, vim.log.levels.ERROR)
+    -- scheduled: an ERROR notify raises inside FileType autocmds otherwise
+    vim.schedule(function()
+      util.notify_once("toolchain", err, vim.log.levels.ERROR)
+    end)
     return nil
   end
 
