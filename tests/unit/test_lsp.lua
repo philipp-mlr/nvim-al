@@ -498,7 +498,8 @@ T["workspace loading shows as a progress message and in status()"] = function()
   local echos = {}
   local orig = vim.api.nvim_echo
   vim.api.nvim_echo = function(chunks, history, opts)
-    if opts and opts.kind == "progress" then
+    -- only the workspace-loading message (title "AL"); other operations' ticks may interleave
+    if opts and opts.kind == "progress" and opts.title == "AL" then
       table.insert(echos, { text = chunks[1][1], status = opts.status })
     end
     return orig(chunks, history, opts)
