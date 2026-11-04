@@ -1,3 +1,5 @@
 .superpowers/
 .deps/
 doc/tags
+result
+result-*
