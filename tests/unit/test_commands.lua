@@ -20,6 +20,7 @@ T["names and completion"] = function()
     "log",
     "publish",
     "restart",
+    "restore",
     "symbols",
     "target",
     "test",
@@ -41,7 +42,7 @@ T["unknown subcommand lists valid ones"] = function()
   eq(#notes, 1)
   eq(
     notes[1][1],
-    "nvim-al: unknown subcommand 'foo'; valid: build, compile, debug, info, log, publish, restart, symbols, target, test"
+    "nvim-al: unknown subcommand 'foo'; valid: build, compile, debug, info, log, publish, restart, restore, symbols, target, test"
   )
   eq(notes[1][2], vim.log.levels.ERROR)
 end

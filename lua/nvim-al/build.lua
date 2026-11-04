@@ -53,6 +53,90 @@ end
 
 M._save_project_buffers = save_project_buffers
 
+-- Builds rewrite tracked files (report layouts, *.g.xlf). Remember which ones
+-- so the user is told and can undo exactly those.
+---@type { root: string, files: string[] }|nil
+M._rewritten = nil
+
+--- Tracked files under `dir` that differ from HEAD, with their content hash
+--- (so a file the user already edited still counts when the build changes it).
+---@return table<string, string>|nil path (relative to the git root) -> hash
+local function dirty_tracked(root, dir)
+  local r = vim
+    .system({ "git", "-C", root, "diff", "--name-only", "-z", "HEAD", "--", dir }, { text = true })
+    :wait()
+  if r.code ~= 0 then
+    return nil
+  end
+  local out = {}
+  local files = vim.split(r.stdout, "\0", { trimempty = true })
+  if #files == 0 then
+    return out
+  end
+  local h = vim
+    .system(vim.list_extend({ "git", "-C", root, "hash-object", "--" }, files), { text = true })
+    :wait()
+  local hashes = vim.split(h.stdout or "", "\n", { trimempty = true })
+  for i, f in ipairs(files) do
+    out[f] = hashes[i] or "?"
+  end
+  return out
+end
+
+local function snapshot(folder)
+  local root = require("nvim-al.workspace").git_root(folder.path)
+  if not root then
+    return nil
+  end
+  local files = dirty_tracked(root, folder.path)
+  return files and { root = root, dir = folder.path, files = files } or nil
+end
+
+local function report_rewritten(snap)
+  if not snap then
+    return
+  end
+  local after = dirty_tracked(snap.root, snap.dir) or {}
+  local changed = {}
+  for f, hash in pairs(after) do
+    if snap.files[f] ~= hash then
+      changed[#changed + 1] = f
+    end
+  end
+  if #changed == 0 then
+    return
+  end
+  table.sort(changed)
+  M._rewritten = { root = snap.root, files = changed }
+  local shown = vim.list_slice(changed, 1, 5)
+  util.notify(
+    ("the build rewrote %d tracked file(s):\n  %s%s\n:AL restore puts them back"):format(
+      #changed,
+      table.concat(shown, "\n  "),
+      #changed > #shown and ("\n  … and " .. (#changed - #shown) .. " more") or ""
+    ),
+    vim.log.levels.WARN
+  )
+end
+
+--- Undo the tracked-file rewrites of the last build (git checkout of exactly
+--- those files; the user's own edits elsewhere stay).
+function M.restore()
+  local r = M._rewritten
+  if not r then
+    return util.notify("nothing to restore")
+  end
+  local res = vim
+    .system(vim.list_extend({ "git", "-C", r.root, "checkout", "--" }, r.files), { text = true })
+    :wait()
+  if res.code ~= 0 then
+    return util.notify("restore failed: " .. vim.trim(res.stderr or ""), vim.log.levels.ERROR)
+  end
+  M._rewritten = nil
+  vim.cmd("checktime")
+  util.notify(("restored %d file(s)"):format(#r.files))
+end
+
 --- Build the project of the buffer with the language server (al/createPackage).
 ---@param bufnr integer|nil
 ---@param on_done? fun(ok: boolean, ctx: table)
@@ -75,6 +159,7 @@ function M.build(bufnr, on_done, opts)
     return util.notify("no AL language server for this buffer", vim.log.levels.WARN)
   end
   save_project_buffers(ctx.folder)
+  local snap = snapshot(ctx.folder)
   local nvim_al = require("nvim-al")
   nvim_al._building = true
   local owned = opts.progress == nil
@@ -93,6 +178,7 @@ function M.build(bufnr, on_done, opts)
     local active = M._active or { lines = {} }
     M._active = nil
     local ok = not err and type(result) == "table" and result.success == true
+    report_rewritten(snap)
     if ok then
       if owned then
         p:finish(true, "built")

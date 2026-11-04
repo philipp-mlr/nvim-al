@@ -97,25 +97,36 @@ workspace file's "launch" section (or the launch hook).
 :AL info            Toolchain, workspace, folders, active project, closure
                     and the effective settings of the current folder.
 :AL build           Build the current project with the language server.
-                    Errors land in quickfix.
+                    Errors land in quickfix. If the build rewrote tracked
+                    files (report layouts, *.g.xlf), you are told which.
+:AL restore         Put back the tracked files the last build rewrote
+                    (git checkout of exactly those; your edits stay).
 :AL compile[!]      Compile every project of the workspace with altool, using
                     the workspace-level analyzers and ruleset. Errors and
                     warnings land in quickfix. With ! the build log opens.
                     Like any AL build, this regenerates *.g.xlf translation
                     files of apps with the TranslationFile feature.
-:AL publish         Build, then publish the .app to the target.
+:AL publish         Build, then publish the .app to the target. In-repo
+                    dependencies the target lacks (or has in another
+                    version) are offered first and published in order.
 :AL symbols         Download symbols from the target.
 :AL symbols global  Download symbols from Microsoft's NuGet feeds.
 :AL test [id [method]]
                     Run the test at the cursor (method in a [Test]
                     procedure, else the codeunit), or the given one, on the
-                    target. Failures land in quickfix. Publish first.
+                    target. Each test procedure gets a ✓/✗ sign, failures
+                    their message as virtual text and a quickfix entry.
+:AL test file       Run every test of the current codeunit.
+:AL test last       Repeat the previous test run from any buffer.
+:AL log [op]        Open the output of the last build, compile, publish,
+                    symbols or test run.
 :AL debug           Start debugging (nvim-dap).
 :AL target          Pick the target again (see below).
 :AL restart         Restart the language server of this workspace.
 
 The target is the launch configuration used by publish, symbols, tests and
-debugging. nvim-al asks once per project when several exist and remembers the
+debugging. Before anything slow, nvim-al checks that the target answers and
+accepts the credentials, and says what is wrong if not. nvim-al asks once per project when several exist and remembers the
 answer for the session.
 
 Credentials: v1 supports UserPassword and Windows authentication. When

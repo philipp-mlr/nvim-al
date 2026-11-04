@@ -138,6 +138,11 @@ local subcommands = {
     end,
     complete = { "build", "compile", "publish", "symbols", "test" },
   },
+  restore = {
+    run = function()
+      require("nvim-al.build").restore()
+    end,
+  },
   restart = {
     run = function()
       require("nvim-al.lsp").restart_buffer(cur())

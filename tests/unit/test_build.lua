@@ -186,6 +186,99 @@ T["build: compiler log lines become progress, log buffer and quickfix"] = functi
   eq(errs[#errs].msg:find("AL0118", 1, true) ~= nil, true)
 end
 
+local function git(dir, ...)
+  local r = vim.system({ "git", "-C", dir, ... }, { text = true }):wait()
+  assert(r.code == 0, r.stderr)
+  return r.stdout
+end
+
+-- a real git repo for the fixture: layout.docx and Mine.al tracked, Mine.al
+-- already modified by "the user" before the build
+local function repo_with_layout()
+  local root = env.multi
+  vim.fn.delete(root .. "/.git", "rf")
+  git(root, "init", "-q")
+  git(root, "config", "user.email", "t@t")
+  git(root, "config", "user.name", "t")
+  local app = root .. "/apps/A/app"
+  vim.fn.writefile({ "original" }, app .. "/layout.docx")
+  vim.fn.writefile({ "mine" }, app .. "/src/Mine.al")
+  git(root, "add", "-A")
+  git(root, "commit", "-q", "-m", "init")
+  vim.fn.writefile({ "my edit" }, app .. "/src/Mine.al")
+  return app
+end
+
+local function fake_build_client(on_request)
+  local client = {
+    id = 4243,
+    request = function(_, method, _, cb)
+      if method == "al/createPackage" then
+        on_request()
+        cb(nil, { success = true })
+      end
+    end,
+  }
+  local lsp = require("nvim-al.lsp")
+  env.orig_client_for = lsp.client_for
+  lsp.client_for = function()
+    return client
+  end
+end
+
+T["build: warns about tracked files it rewrote and :AL restore undoes only those"] = function()
+  local app = repo_with_layout()
+  fake_build_client(function()
+    vim.fn.writefile({ "rewritten" }, app .. "/layout.docx")
+  end)
+  vim.cmd("edit " .. app .. "/src/A_app.Codeunit.al")
+  local done
+  require("nvim-al.build").build(0, function(ok)
+    done = ok
+  end)
+  vim.wait(3000, function()
+    return done ~= nil
+  end)
+  require("nvim-al.lsp").client_for = env.orig_client_for
+  local warns = vim.tbl_filter(function(n)
+    return n.level == vim.log.levels.WARN and n.msg:find("rewrote", 1, true)
+  end, env.notes)
+  eq(#warns, 1)
+  eq(warns[1].msg:find("layout.docx", 1, true) ~= nil, true)
+  eq(warns[1].msg:find("Mine.al", 1, true), nil)
+  eq(warns[1].msg:find(":AL restore", 1, true) ~= nil, true)
+  require("nvim-al.build").restore()
+  eq(vim.fn.readfile(app .. "/layout.docx"), { "original" })
+  eq(vim.fn.readfile(app .. "/src/Mine.al"), { "my edit" })
+end
+
+T["build: no warning when nothing tracked changed; no git is fine"] = function()
+  local app = repo_with_layout()
+  fake_build_client(function() end)
+  vim.cmd("edit " .. app .. "/src/A_app.Codeunit.al")
+  local done
+  require("nvim-al.build").build(0, function(ok)
+    done = ok
+  end)
+  vim.wait(3000, function()
+    return done ~= nil
+  end)
+  vim.fn.delete(env.multi .. "/.git", "rf")
+  done = nil
+  require("nvim-al.build").build(0, function(ok)
+    done = ok
+  end)
+  vim.wait(3000, function()
+    return done ~= nil
+  end)
+  require("nvim-al.lsp").client_for = env.orig_client_for
+  eq(done, true)
+  local warns = vim.tbl_filter(function(n)
+    return n.level == vim.log.levels.WARN and n.msg:find("rewrote", 1, true)
+  end, env.notes)
+  eq(#warns, 0)
+end
+
 T["compile hook short-circuits"] = function()
   local got
   require("nvim-al").setup({
