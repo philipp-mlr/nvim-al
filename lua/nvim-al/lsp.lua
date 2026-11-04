@@ -8,6 +8,64 @@ local workspace = require("nvim-al.workspace")
 
 local M = {}
 
+local SEVERITY = { error = 1, warning = 2, info = 3, hint = 4 }
+
+-- Full diagnostics per URI as last published, so opening a file can restore
+-- what was filtered while it was closed.
+---@type table<string, { result: table, ctx: table, config: table|nil }>
+local full_diagnostics = {}
+
+local function min_severity()
+  local d = require("nvim-al").config().diagnostics or {}
+  return SEVERITY[d.workspace_min_severity or "warning"] or 2
+end
+
+local function is_open(uri)
+  local b = vim.uri_to_bufnr(uri)
+  return vim.api.nvim_buf_is_loaded(b)
+end
+
+--- Forward diagnostics to Neovim, keeping only severe ones for closed files.
+function M._publish_diagnostics(err, result, ctx, config)
+  local handler = vim.lsp.handlers["textDocument/publishDiagnostics"]
+  if err or type(result) ~= "table" or type(result.diagnostics) ~= "table" then
+    return handler(err, result, ctx, config)
+  end
+  local min = min_severity()
+  if min >= 4 then
+    full_diagnostics[result.uri] = nil
+    return handler(err, result, ctx, config)
+  end
+  full_diagnostics[result.uri] = { result = result, ctx = ctx, config = config }
+  if is_open(result.uri) then
+    return handler(err, result, ctx, config)
+  end
+  local kept = {}
+  for _, d in ipairs(result.diagnostics) do
+    if (d.severity or 1) <= min then
+      kept[#kept + 1] = d
+    end
+  end
+  return handler(err, vim.tbl_extend("force", result, { diagnostics = kept }), ctx, config)
+end
+
+--- A file was opened: show everything the server reported for it.
+function M._restore_diagnostics(bufnr)
+  local uri = vim.uri_from_bufnr(bufnr)
+  local e = full_diagnostics[uri]
+  if e and vim.lsp.get_client_by_id(e.ctx.client_id) then
+    vim.lsp.handlers["textDocument/publishDiagnostics"](nil, e.result, e.ctx, e.config)
+  end
+end
+
+vim.api.nvim_create_autocmd("BufReadPost", {
+  group = vim.api.nvim_create_augroup("nvim-al.diagnostics", { clear = true }),
+  pattern = "*.al",
+  callback = function(a)
+    M._restore_diagnostics(a.buf)
+  end,
+})
+
 M.NAME = "nvim-al"
 
 ---@class nvim_al.ClientState
@@ -281,7 +339,7 @@ local function handlers(client_state_of)
           result.uri = vim.uri_from_fname(uri)
         end
       end
-      return vim.lsp.handlers["textDocument/publishDiagnostics"](err, result, ctx, config)
+      return M._publish_diagnostics(err, result, ctx, config)
     end,
     ["window/logMessage"] = function(err, result, ctx, config)
       require("nvim-al.build").server_log(err, result, ctx)

@@ -17,6 +17,7 @@ local M = {}
 ---@field analyzer_folder string|nil absolute dir substituted for ${analyzerFolder}
 ---@field settings table<string, any> user-level al.* settings
 ---@field hooks nvim_al.Hooks
+---@field diagnostics { workspace_min_severity: "error"|"warning"|"info"|"hint" }
 
 ---@type nvim_al.Config
 M.defaults = {
@@ -25,6 +26,9 @@ M.defaults = {
   analyzer_folder = nil,
   settings = {},
   hooks = {},
+  -- files that are not loaded in a buffer only keep diagnostics at least this
+  -- severe (the AL analyzers report ~20k hints across a large workspace)
+  diagnostics = { workspace_min_severity = "warning" },
 }
 
 local known = {
@@ -33,6 +37,7 @@ local known = {
   analyzer_folder = true,
   settings = true,
   hooks = true,
+  diagnostics = true,
 }
 
 --- Defaults merged with user options. Keys starting with "_" are test-only and

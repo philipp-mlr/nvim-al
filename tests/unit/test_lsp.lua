@@ -493,6 +493,63 @@ T["publishDiagnostics with a bare path (no URI scheme) does not raise"] = functi
   eq(errs, {})
 end
 
+T["diagnostics: closed files keep warnings only; opening restores hints"] = function()
+  local multi = H.fixture("multi")
+  local closed = multi .. "/apps/A/app/src/Closed.Codeunit.al"
+  vim.fn.writefile({ "codeunit 50001 Closed", "{", "}" }, closed)
+  vim.env.FAKE_DIAGS_FOR = vim.uri_from_fname(closed)
+  open(multi .. "/apps/A/app/src/A_app.Codeunit.al")
+  settle(1)
+  vim.wait(300)
+  vim.env.FAKE_DIAGS_FOR = nil
+  local function codes()
+    local out = {}
+    for _, d in ipairs(vim.diagnostic.get()) do
+      if vim.api.nvim_buf_get_name(d.bufnr) == closed then
+        out[#out + 1] = d.code
+      end
+    end
+    table.sort(out)
+    return out
+  end
+  vim.wait(2000, function()
+    return #codes() > 0
+  end, 20)
+  eq(codes(), { "AA0001" })
+  vim.cmd("edit " .. closed)
+  vim.wait(2000, function()
+    return #codes() == 3
+  end, 20)
+  eq(codes(), { "AA0001", "AA0218", "AA0248" })
+  vim.fn.delete(closed)
+end
+
+T["diagnostics: workspace_min_severity = 'hint' keeps everything"] = function()
+  require("nvim-al").setup({
+    _host_cmd = { vim.v.progpath, "-l", H.root .. "/tests/fake_server.lua" },
+    diagnostics = { workspace_min_severity = "hint" },
+  })
+  local multi = H.fixture("multi")
+  local closed = multi .. "/apps/A/app/src/Closed2.Codeunit.al"
+  vim.fn.writefile({ "codeunit 50002 Closed2", "{", "}" }, closed)
+  vim.env.FAKE_DIAGS_FOR = vim.uri_from_fname(closed)
+  open(multi .. "/apps/A/app/src/A_app.Codeunit.al")
+  settle(1)
+  vim.env.FAKE_DIAGS_FOR = nil
+  local n = 0
+  vim.wait(2000, function()
+    n = 0
+    for _, d in ipairs(vim.diagnostic.get()) do
+      if vim.api.nvim_buf_get_name(d.bufnr) == closed then
+        n = n + 1
+      end
+    end
+    return n == 3
+  end, 20)
+  eq(n, 3)
+  vim.fn.delete(closed)
+end
+
 T["workspace loading shows as a progress message and in status()"] = function()
   vim.env.FAKE_LOAD_PROGRESS = "1"
   local echos = {}

@@ -80,6 +80,28 @@ local function handle(msg)
           params = { owner = 0, percent = 100, message = "", cancel = false },
         })
       end
+      if os.getenv("FAKE_DIAGS_FOR") then
+        -- one warning and one hint for a file the editor has not opened
+        local function d(sev, code, line)
+          return {
+            range = {
+              start = { line = line, character = 0 },
+              ["end"] = { line = line, character = 1 },
+            },
+            severity = sev,
+            code = code,
+            message = code,
+          }
+        end
+        send({
+          jsonrpc = "2.0",
+          method = "textDocument/publishDiagnostics",
+          params = {
+            uri = os.getenv("FAKE_DIAGS_FOR"),
+            diagnostics = { d(2, "AA0001", 0), d(4, "AA0248", 1), d(3, "AA0218", 2) },
+          },
+        })
+      end
       if os.getenv("FAKE_BARE_URI") == "1" then
         -- what EditorServices does for an unresolved ruleset path: no scheme
         send({

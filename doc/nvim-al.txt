@@ -59,6 +59,10 @@ defaults work when the extension is installed in VS Code.
       -- User-level al.* settings (the place VS Code's user settings.json
       -- would be). Workspace and folder settings override them.
       settings = {},
+      -- Files not open in a buffer keep only diagnostics at least this severe
+      -- ("error", "warning", "info", "hint"). A large workspace reports tens
+      -- of thousands of analyzer hints; opening a file shows all of its own.
+      diagnostics = { workspace_min_severity = "warning" },
       hooks = {}, -- see |nvim-al-hooks|
     })
 <
