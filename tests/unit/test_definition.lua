@@ -45,6 +45,7 @@ local T = MiniTest.new_set({
       })
       env.multi = H.fixture("multi")
       vim.env.FAKE_DEF_TARGET = env.multi .. "/apps/A/test/src/A_test.Codeunit.al"
+      vim.env.FAKE_SYMBOL_PATH = env.multi .. "/apps/A/app/src/A_app.Codeunit.al"
       vim.cmd("edit " .. env.multi .. "/apps/A/app/src/A_app.Codeunit.al")
       env.buf = vim.api.nvim_get_current_buf()
       env.client = require("nvim-al.lsp").attach(env.buf)
@@ -244,6 +245,123 @@ T["textDocument/declaration goes to the definition (AL has no separate declarati
     return vim.api.nvim_buf_get_name(0) == vim.env.FAKE_DEF_TARGET
   end)
   eq(vim.api.nvim_buf_get_name(0), vim.env.FAKE_DEF_TARGET)
+end
+
+T["workspace/symbol: objects and members from al/symbolSearch, with locations"] = MiniTest.new_set({
+  hooks = {
+    pre_once = function()
+      next_mode = "file"
+    end,
+  },
+})
+T["workspace/symbol: objects and members from al/symbolSearch, with locations"]["case"] = function()
+  local file = env.multi .. "/apps/A/app/src/A_app.Codeunit.al"
+  local res = env.client:request_sync("workspace/symbol", { query = "A" }, 5000, env.buf)
+  local by = {}
+  for _, s in ipairs(res.result) do
+    by[s.name] = s
+  end
+  -- local object: its header line
+  eq(by["Codeunit A_app"].location.uri, vim.uri_from_fname(file))
+  eq(by["Codeunit A_app"].location.range.start.line, 0)
+  -- local member: the procedure line
+  eq(by["A_app.Hello"].location.uri, vim.uri_from_fname(file))
+  eq(by["A_app.Hello"].location.range.start.line, 2)
+  eq(by["A_app.Hello"].kind, vim.lsp.protocol.SymbolKind.Method)
+  -- dependency object and member: the object's preview
+  eq(by["Table Customer"].location.uri, "al-preview://allang/base/Table/18/Customer.dal")
+  eq(by["Customer.Insert"].location.uri, "al-preview://allang/base/Table/18/Customer.dal")
+  local searches = vim.tbl_filter(function(m)
+    return m.method == "al/symbolSearch"
+  end, read_log())
+  eq(#searches >= 2, true)
+  eq(searches[#searches].params.query, "A")
+end
+
+T["workspace/symbol: an empty query lists objects only"] = MiniTest.new_set({
+  hooks = {
+    pre_once = function()
+      next_mode = "file"
+    end,
+  },
+})
+T["workspace/symbol: an empty query lists objects only"]["case"] = function()
+  local res = env.client:request_sync("workspace/symbol", { query = "" }, 5000, env.buf)
+  local names = vim.tbl_map(function(s)
+    return s.name
+  end, res.result)
+  table.sort(names)
+  eq(names, { "Codeunit A_app", "Table Customer" }) -- no members for an empty query
+end
+
+T["typeDefinition: from a variable use to the type of its declaration"] = MiniTest.new_set({
+  hooks = {
+    pre_once = function()
+      next_mode = "type"
+    end,
+  },
+})
+T["typeDefinition: from a variable use to the type of its declaration"]["case"] = function()
+  eq(env.client.server_capabilities.typeDefinitionProvider, true)
+  vim.api.nvim_buf_set_lines(env.buf, 0, -1, false, {
+    'codeunit 50100 "A_app"',
+    "{",
+    "    var",
+    "        Customer: Record Customer;",
+    "        Count: Integer;",
+    "        Customer.Get();",
+    "",
+    "        Count := 1;",
+    "}",
+  })
+  vim.api.nvim_win_set_cursor(0, { 6, 10 })
+  local res = env.client:request_sync(
+    "textDocument/typeDefinition",
+    vim.lsp.util.make_position_params(0, "utf-16"),
+    5000,
+    env.buf
+  )
+  eq(res.result.uri, "al-preview://allang/app/Table/18/Customer.al")
+  -- not an object type: nothing
+  vim.api.nvim_win_set_cursor(0, { 8, 9 })
+  res = env.client:request_sync(
+    "textDocument/typeDefinition",
+    vim.lsp.util.make_position_params(0, "utf-16"),
+    5000,
+    env.buf
+  )
+  eq(res.result, nil)
+  -- vim.lsp.buf.type_definition() (Telescope's lsp_type_definitions uses the same request) jumps
+  vim.api.nvim_win_set_cursor(0, { 6, 10 })
+  vim.bo[env.buf].modified = false
+  vim.lsp.buf.type_definition()
+  wait_for(function()
+    return vim.api.nvim_buf_get_name(0) == "al-preview://allang/app/Table/18/Customer.al"
+  end)
+  eq(vim.api.nvim_buf_get_name(0), "al-preview://allang/app/Table/18/Customer.al")
+end
+
+T["the symbol index is built in the background once the workspace has loaded"] = MiniTest.new_set({
+  hooks = {
+    pre_once = function()
+      next_mode = "file"
+      vim.env.FAKE_LOAD_PROGRESS = "1" -- the fake reports "loaded" (percent 100)
+    end,
+    post_once = function()
+      vim.env.FAKE_LOAD_PROGRESS = nil
+    end,
+  },
+})
+T["the symbol index is built in the background once the workspace has loaded"]["case"] = function()
+  wait_for(function()
+    return #vim.tbl_filter(function(m)
+      return m.method == "al/symbolSearch"
+    end, read_log()) > 0
+  end, 3000)
+  local warm = vim.tbl_filter(function(m)
+    return m.method == "al/symbolSearch"
+  end, read_log())
+  eq(#warm, 1)
 end
 
 T["fix: vim.lsp.buf.definition opens al-preview results"] = MiniTest.new_set({

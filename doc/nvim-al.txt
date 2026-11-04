@@ -68,7 +68,16 @@ defaults work when the extension is installed in VS Code.
 <
 Buffer-local on attach: `gd` (unless you mapped it) and 'tagfunc' use AL go
 to definition. `textDocument/declaration` (`gD`) goes to the definition too;
-AL has no separate declaration. All other LSP features work through Neovim's defaults
+AL has no separate declaration. The server answers neither workspace symbols
+nor type definitions; nvim-al provides both, so pickers such as Telescope's
+`lsp_dynamic_workspace_symbols` and `lsp_type_definitions` work:
+- workspace symbols: objects of the workspace and its dependencies, plus
+  procedures and fields when you type a query. Dependency objects open as
+  read-only previews. The symbol index builds in the background after the
+  workspace has loaded (~15 s on a large workspace).
+- type definition: from a variable, parameter or field to the object it is
+  declared with (`Record Customer` -> table Customer).
+Not available from the server: document highlight and call hierarchy. All other LSP features work through Neovim's defaults
 (|lsp-defaults|).
 
 ==============================================================================

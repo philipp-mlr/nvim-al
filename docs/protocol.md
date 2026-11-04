@@ -219,6 +219,44 @@ a `file://…/<Name>.dal` result needs its last path segment joined back onto
 the parsed parent URI. Verified: a jump to `Record Customer` returns
 `al-preview://allang/app/Table/18/Customer.dal`, about 5,000 lines of source.
 
+### 2.6a Workspace symbols and type definition
+
+The server advertises `workspaceSymbolProvider`, but `workspace/symbol`
+returns nothing (or never answers on a large workspace). `textDocument/declaration`,
+`typeDefinition`, `documentHighlight` and call hierarchy are null or empty.
+VS Code's symbol search tool uses:
+
+```
+al/symbolSearch { query, filters: { kinds?, memberKinds?, scope?, limit?, … }, continuationToken? }
+→ { symbols: [{ id, kind, name, containerName, namespace, path?, signature, … }],
+    truncated?, message, nextContinuationToken? }
+```
+
+- `query` matches names (`*` or `""` = everything, a number = object id).
+  Without `memberKinds` only objects come back; `memberKinds: ["Method",
+  "Field"]` returns members.
+- `path` is set for symbols in the workspace's own sources; dependency
+  symbols have none.
+- `id` is `:<appId>:<Kind>:<Object>` (members: `…:<Object>.:<MemberKind>:<Member>`;
+  dots in names are escaped as tabs).
+- The first call builds an index: ~15 s on bc-apps' Email workspace; later
+  calls take milliseconds to ~2 s.
+
+To locate a dependency object:
+
+```
+al/getApplicationObject { appId, type: "<Kind>", name } (or id instead of name)
+→ { location: { uri: "al-preview://…/<Kind>/<id>/<Name>.dal", range }, … }
+```
+
+Field names other than `type`/`id`/`name` (e.g. `objectType`, `objectId`) return null.
+`al/getApplicationObjects {}` lists every object of the closure (13,102 on
+Email, ~3 s) with locations.
+
+nvim-al builds `workspace/symbol` from these (objects, plus members when the
+query is not empty) and type definition from two go-to-definition hops:
+symbol → its declaration (`X: Record Customer;`) → the type named there.
+
 ### 2.7 Diagnostics
 
 Standard push: `textDocument/publishDiagnostics`. With

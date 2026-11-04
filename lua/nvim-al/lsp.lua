@@ -261,12 +261,27 @@ local function load_manifests(client, st, done)
   end
 end
 
+--- The first al/symbolSearch builds the server's symbol index (~15s on a large
+--- workspace). Do it in the background once the workspace has loaded, so the
+--- first workspace symbol search is quick.
+local function warm_symbols(client, st)
+  if st.symbols_warm or client:is_stopped() then
+    return
+  end
+  st.symbols_warm = true
+  client:request("al/symbolSearch", { query = "*", filters = { limit = 1 } }, function() end)
+end
+
 local function handlers(client_state_of)
   return {
     ["al/activeProjectLoaded"] = function(_, _, ctx)
       local st = client_state_of(ctx.client_id)
       if st then
         st.loaded = true
+        local c = vim.lsp.get_client_by_id(ctx.client_id)
+        if c then
+          warm_symbols(c, st)
+        end
       end
       return vim.NIL
     end,
@@ -296,6 +311,10 @@ local function handlers(client_state_of)
           st.loading = nil
         end
         st.loaded = true
+        local c = vim.lsp.get_client_by_id(ctx.client_id)
+        if c and not result.cancel then
+          warm_symbols(c, st)
+        end
         return
       end
       local msg = vim.trim((result.message or ""):gsub("%s+", " "))
@@ -406,44 +425,69 @@ end
 --- results are fixed up, al-preview:// URIs open through BufReadCmd.
 --- AL has no declaration separate from the definition: textDocument/declaration
 --- (`gD`) takes the same route instead of "not supported".
+--- The server answers neither typeDefinition nor workspace/symbol: those are
+--- built from go-to-definition and al/symbolSearch (nvim-al.symbols).
 local ROUTED = { ["textDocument/definition"] = true, ["textDocument/declaration"] = true }
 
 local function patch_definition(client)
-  client.server_capabilities.definitionProvider = true
-  client.server_capabilities.declarationProvider = true
+  local caps = client.server_capabilities
+  caps.definitionProvider = true
+  caps.declarationProvider = true
+  caps.typeDefinitionProvider = true
+  caps.workspaceSymbolProvider = true
   local orig = client.request
-  client.request = function(self, method, params, handler, bufnr)
-    if not ROUTED[method] then
-      return orig(self, method, params, handler, bufnr)
-    end
+  local definition = require("nvim-al.definition")
+  local symbols = require("nvim-al.symbols")
+
+  -- al/gotodefinition for a position; cb(err, location|nil, ctx, config)
+  local function jump(self, uri, position, cb, bufnr)
     local body = {
       browserInfo = { browser = "SystemDefault", incognito = false },
       environmentInfo = { env = vim.NIL },
-      textDocumentPositionParams = {
-        textDocument = params.textDocument,
-        position = params.position,
-      },
+      textDocumentPositionParams = { textDocument = { uri = uri }, position = position },
     }
-    local h = handler or vim.lsp.handlers[method]
     return orig(self, "al/gotodefinition", body, function(err, result, ctx, config)
       local loc = nil
-      local definition = require("nvim-al.definition")
       if not err and type(result) == "table" and result.uri then
         loc = { uri = definition.fix_uri(result.uri), range = result.range }
       end
-      ctx = vim.tbl_extend("force", ctx or {}, { method = method })
-      if not h then
-        return
-      end
-      if loc and definition.is_preview(loc.uri) then
-        -- load the preview content first: the standard handler sets the cursor
-        -- right after opening, which fails on a still-empty buffer
-        return definition.preload(loc.uri, function()
-          h(err, loc, ctx, config)
-        end, self.id)
-      end
-      return h(err, loc, ctx, config)
+      cb(err, loc, ctx, config)
     end, bufnr)
+  end
+
+  -- hand a location to the standard handler, preview content loaded first:
+  -- the handler sets the cursor right after opening, which fails on an empty buffer
+  local function deliver(self, h, method, err, loc, ctx, config)
+    ctx = vim.tbl_extend("force", ctx or {}, { method = method })
+    if not h then
+      return
+    end
+    if loc and definition.is_preview(loc.uri) then
+      return definition.preload(loc.uri, function()
+        h(err, loc, ctx, config)
+      end, self.id)
+    end
+    return h(err, loc, ctx, config)
+  end
+
+  client.request = function(self, method, params, handler, bufnr)
+    local h = handler or vim.lsp.handlers[method]
+    if ROUTED[method] then
+      return jump(self, params.textDocument.uri, params.position, function(err, loc, ctx, config)
+        deliver(self, h, method, err, loc, ctx, config)
+      end, bufnr)
+    elseif method == "textDocument/typeDefinition" then
+      local ok, id = true, nil
+      symbols.type_definition(params, function(uri, position, cb)
+        ok, id = jump(self, uri, position, cb, bufnr)
+      end, function(err, loc, ctx, config)
+        deliver(self, h, method, err, loc, ctx, config)
+      end)
+      return ok, id
+    elseif method == "workspace/symbol" then
+      return symbols.workspace_symbol(self, orig, params, h, bufnr)
+    end
+    return orig(self, method, params, handler, bufnr)
   end
 end
 

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.6
+
+- Workspace symbols (`vim.lsp.buf.workspace_symbol()`, Telescope
+  `lsp_dynamic_workspace_symbols`/`lsp_workspace_symbols`): objects of the
+  workspace and its dependencies, plus procedures and fields when there is a
+  query, from `al/symbolSearch`. The server's own `workspace/symbol` returned
+  nothing. The symbol index is built in the background after loading.
+- Type definition (`vim.lsp.buf.type_definition()`, Telescope
+  `lsp_type_definitions`): from a variable to the object it is declared with.
+
 ## 0.1.5
 
 - `textDocument/declaration` (`gD`, `vim.lsp.buf.declaration()`) goes to the

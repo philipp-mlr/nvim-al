@@ -122,6 +122,70 @@ local function handle(msg)
       id = msg.id,
       result = { success = true, manifest = msg.params.manifest },
     })
+  elseif m == "al/symbolSearch" then
+    -- objects by default, members when memberKinds is given (like the real server)
+    local f = msg.params.filters or {}
+    local path = os.getenv("FAKE_SYMBOL_PATH")
+    local symbols
+    if f.memberKinds then
+      symbols = {
+        {
+          kind = "Method",
+          name = "Hello",
+          containerName = "A_app",
+          id = ":aaa:Codeunit:A_app.:Method:Hello",
+          path = path,
+        },
+        {
+          kind = "Method",
+          name = "Insert",
+          containerName = "Customer",
+          id = ":base:Table:Customer.:Method:Insert",
+        },
+      }
+    else
+      symbols = {
+        { kind = "Codeunit", name = "A_app", id = ":aaa:Codeunit:A_app", path = path },
+        { kind = "Table", name = "Customer", id = ":base:Table:Customer" },
+      }
+    end
+    send({ jsonrpc = "2.0", id = msg.id, result = { symbols = symbols, message = "" } })
+  elseif m == "al/getApplicationObject" then
+    local p = msg.params
+    local result = vim.NIL
+    if p.appId == "base" and p.type == "Table" and p.name == "Customer" then
+      result = {
+        name = "Customer",
+        location = {
+          uri = "al-preview://allang/base/Table/18/Customer.dal",
+          range = { start = { line = 0, character = 0 }, ["end"] = { line = 0, character = 0 } },
+        },
+      }
+    end
+    send({ jsonrpc = "2.0", id = msg.id, result = result })
+  elseif m == "al/gotodefinition" and (os.getenv("FAKE_DEF") or "") == "type" then
+    -- a variable use on line 5 -> its declaration on line 3 ("        Customer: Record Customer;"),
+    -- the type name on line 3 -> the table
+    local tdp = msg.params.textDocumentPositionParams
+    local pos = tdp.position
+    local result = vim.NIL
+    if pos.line == 5 then
+      result = {
+        uri = tdp.textDocument.uri,
+        range = { start = { line = 3, character = 8 }, ["end"] = { line = 3, character = 16 } },
+      }
+    elseif pos.line == 7 then
+      result = {
+        uri = tdp.textDocument.uri,
+        range = { start = { line = 4, character = 8 }, ["end"] = { line = 4, character = 13 } },
+      }
+    elseif pos.line == 3 and pos.character >= 25 then
+      result = {
+        uri = "al-preview://allang/app/Table/18/Customer.al",
+        range = { start = { line = 2, character = 4 }, ["end"] = { line = 2, character = 9 } },
+      }
+    end
+    send({ jsonrpc = "2.0", id = msg.id, result = result })
   elseif m == "al/gotodefinition" then
     local mode = os.getenv("FAKE_DEF") or "file"
     local target = os.getenv("FAKE_DEF_TARGET")
