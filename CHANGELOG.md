@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.3
+
+- Removed a stray `result` symlink that broke the Nix plugin build.
+
 ## 0.1.2
 
 - Flake: `lib.mkAlExtension pkgs` builds the pinned AL extension with your own
