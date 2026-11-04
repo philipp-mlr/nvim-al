@@ -18,6 +18,14 @@ function M.base_url(target)
   return scheme .. host .. port .. instance
 end
 
+--- Short name of where a target points: the server instance ("main-de"),
+--- else the environment or configuration name.
+---@param target nvim_al.Target
+---@return string
+function M.where(target)
+  return target.serverInstance or target.environmentName or target.name or "target"
+end
+
 local function auth_config(env)
   local user = env.BC_SERVER_USERNAME or vim.env.BC_SERVER_USERNAME
   local pass = env.BC_SERVER_PASSWORD or vim.env.BC_SERVER_PASSWORD

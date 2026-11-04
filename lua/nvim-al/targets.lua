@@ -15,12 +15,7 @@ local function context(bufnr)
 end
 
 --- Run `fn(target, env)` with the target and credentials of a project.
---- Short name of where a target points: the server instance ("main-de"),
---- else the configuration name.
-local function where(target)
-  return target.serverInstance or target.environmentName or target.name
-end
-M._where = where
+local where = server.where
 
 local function with_target(ctx, fn, opts)
   opts = opts or {}

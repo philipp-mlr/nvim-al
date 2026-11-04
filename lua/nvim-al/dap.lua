@@ -4,6 +4,8 @@ local credentials = require("nvim-al.credentials")
 local launch = require("nvim-al.launch")
 local toolchain = require("nvim-al.toolchain")
 local util = require("nvim-al.util")
+local feedback = require("nvim-al.feedback")
+local server = require("nvim-al.server")
 local workspace = require("nvim-al.workspace")
 
 local M = {}
@@ -95,6 +97,56 @@ local function check_single(config, cb)
   cb(true)
 end
 
+--- A loaded buffer below `folder` with an AL language server attached (the
+--- build runs through it), else the current buffer.
+---@param folder string
+---@return integer
+function M._buffer_in(folder)
+  local lsp = require("nvim-al.lsp")
+  local prefix = folder:gsub("/+$", "") .. "/"
+  local cur = vim.api.nvim_get_current_buf()
+  if vim.api.nvim_buf_get_name(cur):sub(1, #prefix) == prefix and lsp.client_for(cur) then
+    return cur
+  end
+  for _, b in ipairs(vim.api.nvim_list_bufs()) do
+    if
+      vim.api.nvim_buf_is_loaded(b)
+      and vim.api.nvim_buf_get_name(b):sub(1, #prefix) == prefix
+      and lsp.client_for(b)
+    then
+      return b
+    end
+  end
+  return cur
+end
+
+---@type nvim_al.Progress|nil the debug start in flight
+M._progress = nil
+---@type string[] adapter output of the current debug start
+M._output = {}
+
+--- Hand the adapter executable to nvim-dap.
+local function start(callback, cmd, folder, config, extra)
+  if config.request == "launch" then
+    save_project_buffers(folder)
+  end
+  -- nvim-dap hands options.env to uv.spawn unchanged, which wants "KEY=VALUE"
+  -- strings; a map is silently ignored (the adapter then has no credentials).
+  local env = {}
+  for k, v in pairs(vim.tbl_extend("force", vim.fn.environ(), extra)) do
+    env[#env + 1] = k .. "=" .. v
+  end
+  table.sort(env)
+  callback({
+    type = "executable",
+    command = cmd[1],
+    args = vim.list_slice(cmd, 2),
+    -- The adapter uses its working directory as package cache root when
+    -- al.packageCachePath is not passed: it must be the project folder.
+    options = { cwd = folder, env = env, detached = false, initialize_timeout_sec = 30 },
+  })
+end
+
 --- nvim-dap adapter function: start the AL debug adapter for config.__nvim_al_folder.
 local function adapter(callback, config)
   local folder = config.__nvim_al_folder
@@ -126,24 +178,45 @@ local function adapter(callback, config)
       if not extra then
         return util.notify("debugging cancelled (no credentials)", vim.log.levels.WARN)
       end
-      if config.request == "launch" then
-        save_project_buffers(folder)
-      end
-      -- nvim-dap hands options.env to uv.spawn unchanged, which wants "KEY=VALUE"
-      -- strings; a map is silently ignored (the adapter then has no credentials).
-      local env = {}
-      for k, v in pairs(vim.tbl_extend("force", vim.fn.environ(), extra)) do
-        env[#env + 1] = k .. "=" .. v
-      end
-      table.sort(env)
-      callback({
-        type = "executable",
-        command = cmd[1],
-        args = vim.list_slice(cmd, 2),
-        -- The adapter uses its working directory as package cache root when
-        -- al.packageCachePath is not passed: it must be the project folder.
-        options = { cwd = folder, env = env, detached = false },
-      })
+      local where = server.where(target)
+      local manifest = require("nvim-al.jsonc").read(folder .. "/app.json")
+      local subject = type(manifest) == "table" and manifest.name or vim.fs.basename(folder)
+      feedback.log("debug", {})
+      local p = feedback.progress("AL debug", subject, "checking " .. where)
+      M._progress = p
+      M._output = {}
+      server.check(target, extra, function(ok, msg)
+        if not ok then
+          M._progress = nil
+          p:finish(false, "not started")
+          return util.notify(
+            ("%s: %s\ncheck the environment, or pick another target with :AL target"):format(
+              config.name,
+              msg
+            ),
+            vim.log.levels.ERROR
+          )
+        end
+        if config.request ~= "launch" then
+          p:phase("connecting to " .. where)
+          return start(callback, cmd, folder, config, extra)
+        end
+        -- the adapter publishes the .app in the folder as is: build first, like
+        -- VS Code, so it is current and has a fresh package id (else the server
+        -- rejects it as a duplicate of the one already published)
+        local ws_folder = { path = folder, name = subject, manifest = manifest }
+        require("nvim-al.build").build(M._buffer_in(folder), function(built)
+          if not built then
+            M._progress = nil
+            if not p.finished then
+              p:finish(false, "build failed")
+            end
+            return -- the build reported why (quickfix, notification)
+          end
+          p:phase("publishing to " .. where)
+          start(callback, cmd, folder, config, extra)
+        end, { progress = p, folder = ws_folder })
+      end)
     end)
   end)
 end
@@ -219,6 +292,68 @@ function M.setup()
   dap.listeners.on_session[KEY] = function(_, new)
     if new and new.config and new.config.type == "al" then
       M._fix_responses(new)
+    end
+  end
+
+  -- progress of the debug start: attached/launched, or why not
+  local function started(request)
+    return function(session, err)
+      local p = M._progress
+      if not (p and session and session.config and session.config.type == "al") then
+        return
+      end
+      M._progress = nil
+      local where = server.where(session.config)
+      if err then
+        -- the adapter's own message points at VS Code's debug console; the
+        -- reason is in its output events (nvim-al://debug)
+        local reasons = feedback.reasons(M._output)
+        local text = #reasons > 0 and table.concat(reasons, "\n")
+          or (err.message or vim.inspect(err)):gsub(
+            "%s*See Visual Studio Code debug console.*$",
+            ""
+          )
+        p:finish(false, request .. " failed")
+        return util.notify(
+          ("debugging %s on %s failed:\n%s\n:AL log debug for the adapter output%s"):format(
+            p.subject,
+            where,
+            text,
+            request == "attach" and "; is the app published (:AL publish)?" or ""
+          ),
+          vim.log.levels.ERROR
+        )
+      end
+      p:finish(
+        true,
+        request == "attach"
+            and ("attached to %s, waiting for a session to hit a breakpoint"):format(where)
+          or ("published and launched on %s"):format(where)
+      )
+    end
+  end
+  -- adapter output (publish steps, server errors) goes to nvim-al://debug
+  dap.listeners.after.event_output[KEY] = function(session, body)
+    if
+      not (session and session.config and session.config.type == "al" and body and body.output)
+    then
+      return
+    end
+    if body.category == "telemetry" then
+      return
+    end
+    for _, line in ipairs(vim.split(body.output, "\n", { trimempty = true })) do
+      M._output[#M._output + 1] = line
+      feedback.append("debug", line)
+    end
+  end
+  dap.listeners.after.attach[KEY] = started("attach")
+  dap.listeners.after.launch[KEY] = started("launch")
+  dap.listeners.after.event_terminated[KEY] = function(session)
+    local p = M._progress
+    if p and session and session.config and session.config.type == "al" then
+      M._progress = nil
+      p:finish(false, "the debug adapter ended before the session started")
     end
   end
 

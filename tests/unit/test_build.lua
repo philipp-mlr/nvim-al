@@ -279,6 +279,23 @@ T["build: no warning when nothing tracked changed; no git is fine"] = function()
   eq(#warns, 0)
 end
 
+T["build: without a language server it still reports back and ends the caller's progress"] = function()
+  vim.cmd("edit " .. env.multi .. "/apps/A/app/src/A_app.Codeunit.al")
+  local lsp = require("nvim-al.lsp")
+  local orig = lsp.client_for
+  lsp.client_for = function()
+    return nil
+  end
+  local p = require("nvim-al.feedback").progress("AL publish", "A", "building")
+  local done
+  require("nvim-al.build").build(0, function(ok)
+    done = ok
+  end, { progress = p })
+  lsp.client_for = orig
+  eq(done, false)
+  eq(p.finished, true)
+end
+
 T["compile hook short-circuits"] = function()
   local got
   require("nvim-al").setup({

@@ -156,7 +156,14 @@ function M.build(bufnr, on_done, opts)
   local lsp = require("nvim-al.lsp")
   local client = lsp.client_for(ctx.bufnr)
   if not client then
-    return util.notify("no AL language server for this buffer", vim.log.levels.WARN)
+    util.notify("no AL language server for this buffer", vim.log.levels.WARN)
+    if opts.progress and not opts.progress.finished then
+      opts.progress:finish(false, "build failed (no language server)")
+    end
+    if on_done then
+      on_done(false, ctx)
+    end
+    return
   end
   save_project_buffers(ctx.folder)
   local snap = snapshot(ctx.folder)

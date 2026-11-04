@@ -136,7 +136,7 @@ local subcommands = {
     run = function(args)
       require("nvim-al.feedback").open(args[1])
     end,
-    complete = { "build", "compile", "publish", "symbols", "test" },
+    complete = { "build", "compile", "publish", "symbols", "test", "debug" },
   },
   restore = {
     run = function()

@@ -119,8 +119,12 @@ workspace file's "launch" section (or the launch hook).
 :AL test file       Run every test of the current codeunit.
 :AL test last       Repeat the previous test run from any buffer.
 :AL log [op]        Open the output of the last build, compile, publish,
-                    symbols or test run.
-:AL debug           Start debugging (nvim-dap).
+                    symbols, test or debug run.
+:AL debug           Start debugging (nvim-dap). Checks the target first;
+                    "launch" configurations build before the adapter
+                    publishes. Progress shows connecting/publishing, then
+                    attached or launched; on failure the server's reason
+                    (from the adapter output, :AL log debug).
 :AL target          Pick the target again (see below).
 :AL restart         Restart the language server of this workspace.
 

@@ -37,10 +37,24 @@ local T = MiniTest.new_set({
         "nvim-al.launch",
         "nvim-al.credentials",
         "nvim-al.workspace",
+        "nvim-al.server",
+        "nvim-al.feedback",
+        "nvim-al.build",
       }) do
         package.loaded[m] = nil
       end
-      env = { notes = {}, opened = {} }
+      env = { notes = {}, opened = {}, echos = {} }
+      env.health = { true, "up" }
+      require("nvim-al.server").check = function(_, _, cb)
+        cb(env.health[1], env.health[2])
+      end
+      env.orig_echo = vim.api.nvim_echo
+      vim.api.nvim_echo = function(chunks, history, opts)
+        if opts and opts.kind == "progress" and opts.title == "AL debug" then
+          table.insert(env.echos, { text = chunks[1][1], status = opts.status })
+        end
+        return env.orig_echo(chunks, history, opts)
+      end
       env.dap = stub_dap()
       package.loaded["dap"] = env.dap
       env.orig_notify, env.orig_open, env.orig_input, env.orig_secret =
@@ -69,6 +83,7 @@ local T = MiniTest.new_set({
       require("nvim-al.dap").setup()
     end,
     post_case = function()
+      vim.api.nvim_echo = env.orig_echo
       package.loaded["dap"] = nil
       vim.notify, vim.ui.open, vim.ui.input, vim.fn.inputsecret =
         env.orig_notify, env.orig_open, env.orig_input, env.orig_secret
@@ -106,6 +121,8 @@ T["adapter: executable in the project folder with credentials in env"] = functio
     "/projectRoot:" .. env.multi .. "/apps/B/app",
   })
   eq(got.options.cwd, env.multi .. "/apps/B/app")
+  -- .NET startup takes longer than nvim-dap's 4s default: no false "didn't respond"
+  eq(got.options.initialize_timeout_sec >= 30, true)
   -- nvim-dap passes options.env to uv.spawn as is: it must be a "KEY=VALUE" list
   eq(vim.islist(got.options.env), true)
   eq(vim.tbl_contains(got.options.env, "BC_SERVER_USERNAME=ADMIN"), true)
@@ -275,6 +292,128 @@ T["minor: kill_adapters finds AL debug adapters among Neovim's children"] = func
   local exited = vim.fn.jobwait({ job }, 3000)[1]
   eq(exited ~= -1, true)
   pcall(vim.fn.jobstop, other)
+end
+
+local function fire(kind, name, ...)
+  local l = env.dap.listeners[kind][name]["nvim-al"]
+  assert(l, kind .. "." .. name .. " listener missing")
+  l(...)
+end
+
+T["debug feedback: unreachable target stops before the adapter starts"] = function()
+  env.health = { false, "http://localhost:8880/BC is not reachable (connection refused)" }
+  local configs = env.dap.providers.configs["nvim-al"](vim.api.nvim_get_current_buf())
+  local got
+  env.dap.adapters.al(function(a)
+    got = a
+  end, configs[1])
+  eq(got, nil)
+  local errs = vim.tbl_filter(function(n)
+    return n.level == vim.log.levels.ERROR
+  end, env.notes)
+  eq(#errs, 1)
+  eq(errs[1].msg:find("not reachable", 1, true) ~= nil, true)
+  eq(env.echos[#env.echos].status, "failed")
+end
+
+T["debug feedback: connecting, then attached and waiting"] = function()
+  local configs = env.dap.providers.configs["nvim-al"](vim.api.nvim_get_current_buf())
+  env.dap.adapters.al(function() end, configs[1])
+  eq(env.echos[1].status, "running")
+  eq(env.echos[#env.echos].text:find("connecting to", 1, true) ~= nil, true)
+  local session = { config = configs[1] }
+  fire("after", "attach", session, nil, { success = true })
+  local last = env.echos[#env.echos]
+  eq(last.status, "success")
+  eq(last.text:find("attached to", 1, true) ~= nil, true)
+  eq(last.text:find("waiting", 1, true) ~= nil, true)
+end
+
+T["debug feedback: a rejected attach fails with the server's reason"] = function()
+  local configs = env.dap.providers.configs["nvim-al"](vim.api.nvim_get_current_buf())
+  env.dap.adapters.al(function() end, configs[1])
+  local session = { config = configs[1] }
+  fire("after", "attach", session, { message = "The app 'B' is not published on the server" }, nil)
+  local last = env.echos[#env.echos]
+  eq(last.status, "failed")
+  local errs = vim.tbl_filter(function(n)
+    return n.level == vim.log.levels.ERROR
+  end, env.notes)
+  eq(errs[#errs].msg:find("not published", 1, true) ~= nil, true)
+  eq(errs[#errs].msg:find(":AL publish", 1, true) ~= nil, true)
+end
+
+T["debug feedback: a failed launch shows the adapter's output, named after the app"] = function()
+  local configs = env.dap.providers.configs["nvim-al"](vim.api.nvim_get_current_buf())
+  local cfg = vim.tbl_extend("force", configs[1], { request = "launch" })
+  require("nvim-al.build").build = function(_, on_done)
+    on_done(true, {})
+  end
+  env.dap.adapters.al(function() end, cfg)
+  eq(env.echos[1].text:find("^B app:") ~= nil or env.echos[1].text:find("^B:") ~= nil, true)
+  local session = { config = cfg }
+  fire(
+    "after",
+    "event_output",
+    session,
+    { category = "console", output = "Publishing package to server\n" }
+  )
+  fire("after", "event_output", session, {
+    category = "stderr",
+    output = "error: The extension 'B' could not be deployed: dependency 'X' is not installed.\n",
+  })
+  fire("after", "launch", session, {
+    message = "Could not publish the package to the server. See Visual Studio Code debug console for more details.",
+  }, nil)
+  local errs = vim.tbl_filter(function(n)
+    return n.level == vim.log.levels.ERROR
+  end, env.notes)
+  local msg = errs[#errs].msg
+  eq(msg:find("dependency 'X' is not installed", 1, true) ~= nil, true)
+  eq(msg:find("Visual Studio Code", 1, true), nil)
+  eq(msg:find(":AL log debug", 1, true) ~= nil, true)
+  eq(
+    vim.api.nvim_buf_get_lines(vim.fn.bufnr("nvim-al://debug"), 0, -1, false)[1],
+    "Publishing package to server"
+  )
+end
+
+T["launch builds first (fresh package id), attach does not; a failed build stops"] = function()
+  local build = require("nvim-al.build")
+  local built = {}
+  env.build_ok = true
+  build.build = function(_, on_done, opts)
+    table.insert(built, opts and opts.folder and opts.folder.path)
+    on_done(env.build_ok, {})
+  end
+  local configs = env.dap.providers.configs["nvim-al"](vim.api.nvim_get_current_buf())
+  local got
+  env.dap.adapters.al(function(a)
+    got = a
+  end, configs[1])
+  eq(built, {})
+  eq(got ~= nil, true)
+  local launch = vim.tbl_extend("force", configs[1], { request = "launch" })
+  got = nil
+  env.dap.adapters.al(function(a)
+    got = a
+  end, launch)
+  eq(built, { env.multi .. "/apps/B/app" })
+  eq(got ~= nil, true)
+  env.build_ok = false
+  got = nil
+  env.dap.adapters.al(function(a)
+    got = a
+  end, launch)
+  eq(got, nil)
+  eq(env.echos[#env.echos].status, "failed")
+end
+
+T["debug feedback: adapter exits before attaching"] = function()
+  local configs = env.dap.providers.configs["nvim-al"](vim.api.nvim_get_current_buf())
+  env.dap.adapters.al(function() end, configs[1])
+  fire("after", "event_terminated", { config = configs[1] }, {})
+  eq(env.echos[#env.echos].status, "failed")
 end
 
 T["setup is idempotent"] = function()

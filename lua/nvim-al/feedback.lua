@@ -124,6 +124,7 @@ end
 ---@param msg string e.g. "published", "publish failed"
 function Progress:finish(ok, msg)
   running[self] = nil
+  self.finished = true
   local secs = elapsed(self)
   local text = ("%s: %s"):format(self.subject, msg)
   if secs > 0 then
