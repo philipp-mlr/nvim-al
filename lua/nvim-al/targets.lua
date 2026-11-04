@@ -5,6 +5,7 @@ local feedback = require("nvim-al.feedback")
 local quickfix = require("nvim-al.quickfix")
 local credentials = require("nvim-al.credentials")
 local launch = require("nvim-al.launch")
+local server = require("nvim-al.server")
 local util = require("nvim-al.util")
 
 local M = {}
@@ -14,7 +15,15 @@ local function context(bufnr)
 end
 
 --- Run `fn(target, env)` with the target and credentials of a project.
-local function with_target(ctx, fn)
+--- Short name of where a target points: the server instance ("main-de"),
+--- else the configuration name.
+local function where(target)
+  return target.serverInstance or target.environmentName or target.name
+end
+M._where = where
+
+local function with_target(ctx, fn, opts)
+  opts = opts or {}
   launch.target(ctx.ws, ctx.folder, ctx.cfg, function(target)
     if not target then
       return
@@ -23,7 +32,25 @@ local function with_target(ctx, fn)
       if not env then
         return util.notify("cancelled (no credentials)", vim.log.levels.WARN)
       end
-      fn(target, env)
+      if opts.no_check then
+        return fn(target, env)
+      end
+      -- one quick request before doing anything slow
+      server.check(target, env, function(ok, msg)
+        if not ok then
+          if opts.on_fail then
+            opts.on_fail()
+          end
+          return util.notify(
+            ("%s: %s\ncheck the environment, or pick another target with :AL target"):format(
+              target.name,
+              msg
+            ),
+            vim.log.levels.ERROR
+          )
+        end
+        fn(target, env)
+      end)
     end)
   end)
 end
@@ -103,6 +130,66 @@ end
 
 --- Build, then publish the project's .app to its target.
 ---@param bufnr integer|nil
+--- In-repo projects of the closure (dependencies first) that the target does
+--- not have in the version of their app.json.
+local function missing_dependencies(ctx, installed)
+  local closure = require("nvim-al.closure")
+  local workspace = require("nvim-al.workspace")
+  local order = closure.closure(ctx.ws, ctx.folder) -- folder first, then deps depth-first
+  local out = {}
+  for i = #order, 2, -1 do
+    local f = workspace.folder_for(ctx.ws, order[i])
+    local m = f and f.manifest
+    if m then
+      local have = installed[m.publisher .. "|" .. m.name]
+      if not (have and have.installed and have.version == m.version) then
+        out[#out + 1] = f
+      end
+    end
+  end
+  return out
+end
+
+--- Build and publish one folder on an existing progress; cb(ok).
+local function build_and_publish(ctx, folder, target, env, p, cb)
+  local fctx = vim.tbl_extend("force", ctx, { folder = folder })
+  p.subject = folder.manifest and folder.manifest.name or folder.name
+  p:phase("building")
+  require("nvim-al.build").build(ctx.bufnr, function(ok)
+    if not ok then
+      return cb(false)
+    end
+    local app = newest_app(fctx)
+    if not app then
+      p:finish(false, "publish failed")
+      util.notify("no .app found for " .. folder.name, vim.log.levels.ERROR)
+      return cb(false)
+    end
+    local args = { "publishapp", app, "--project", folder.path }
+    vim.list_extend(args, launch.altool_flags(target))
+    p:phase("publishing to " .. where(target))
+    run_tool("publish", p, args, { cwd = folder.path, env = env }, function(code, lines)
+      if code == 0 then
+        return cb(true)
+      end
+      -- server-side compile errors are relative to the project folder
+      local items = quickfix.from_compiler_lines(lines, folder.path)
+      for _, r in ipairs(feedback.reasons(lines)) do
+        if r:match("^error %u+%d+:") then
+          local code_, text = r:match("^error (%u+%d+):%s*(.*)$")
+          table.insert(items, 1, { type = "E", text = code_ .. ": " .. text })
+        end
+      end
+      vim.fn.setqflist({}, "r", { title = "AL publish", items = items })
+      feedback.fail(p, "publish of " .. folder.name, lines, code, #items)
+      cb(false)
+    end)
+  end, { progress = p, folder = folder })
+end
+
+--- Build, then publish the project's .app to its target. In-repo dependencies
+--- the target lacks are offered first and published in dependency order.
+---@param bufnr integer|nil
 function M.publish(bufnr)
   local ctx = context(bufnr)
   if not ctx then
@@ -111,39 +198,55 @@ function M.publish(bufnr)
   if ctx.cfg.hooks.publish and ctx.cfg.hooks.publish(ctx) then
     return
   end
-  local name = ctx.folder.name
-  local p = feedback.progress("AL publish", name, "building")
-  require("nvim-al.build").build(ctx.bufnr, function(ok)
-    if not ok then
-      return -- build reported the failure on this progress
-    end
-    local app = newest_app(ctx)
-    if not app then
-      p:finish(false, "publish failed")
-      return util.notify("no .app found for " .. name, vim.log.levels.ERROR)
-    end
-    with_target(ctx, function(target, env)
-      local args = { "publishapp", app, "--project", ctx.folder.path }
-      vim.list_extend(args, launch.altool_flags(target))
-      p:phase("publishing to " .. target.name)
-      run_tool("publish", p, args, { cwd = ctx.folder.path, env = env }, function(code, lines)
-        if code == 0 then
-          p:finish(true, "published to " .. target.name)
+  with_target(ctx, function(target, env)
+    server.installed(target, env, function(installed)
+      local missing = installed and missing_dependencies(ctx, installed) or {}
+      local function run(list)
+        local p = feedback.progress("AL publish", ctx.folder.name, "building")
+        local i = 0
+        local function step(ok)
+          if not ok then
+            return
+          end
+          i = i + 1
+          if i > #list then
+            p.subject = ctx.folder.name
+            local extra = #list > 1 and (" (+%d dependencies)"):format(#list - 1) or ""
+            return p:finish(true, "published to " .. where(target) .. extra)
+          end
+          build_and_publish(ctx, list[i], target, env, p, step)
+        end
+        step(true)
+      end
+      if #missing == 0 then
+        return run({ ctx.folder })
+      end
+      local names = table.concat(
+        vim.tbl_map(function(f)
+          return f.manifest and f.manifest.name or f.name
+        end, missing),
+        ", "
+      )
+      vim.ui.select({ "Publish them first", "Publish " .. ctx.folder.name .. " only" }, {
+        prompt = ("%s isn't on %s yet: %s"):format(
+          #missing == 1 and "A dependency" or (#missing .. " dependencies"),
+          where(target),
+          names
+        ),
+      }, function(choice)
+        if not choice then
           return
         end
-        -- server-side compile errors are relative to the project folder
-        local items = quickfix.from_compiler_lines(lines, ctx.folder.path)
-        for _, r in ipairs(feedback.reasons(lines)) do
-          if r:match("^error %u+%d+:") then
-            local code_, text = r:match("^error (%u+%d+):%s*(.*)$")
-            table.insert(items, 1, { type = "E", text = code_ .. ": " .. text })
-          end
+        if choice == "Publish them first" then
+          local list = vim.list_extend({}, missing)
+          list[#list + 1] = ctx.folder
+          run(list)
+        else
+          run({ ctx.folder })
         end
-        vim.fn.setqflist({}, "r", { title = "AL publish", items = items })
-        feedback.fail(p, "publish of " .. name, lines, code, #items)
       end)
     end)
-  end, { progress = p })
+  end)
 end
 
 --- Download symbols for the project, then make the server reload them.

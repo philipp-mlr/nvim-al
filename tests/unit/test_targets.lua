@@ -14,10 +14,12 @@ local T = MiniTest.new_set({
         "nvim-al.credentials",
         "nvim-al.workspace",
         "nvim-al.build",
+        "nvim-al.server",
       }) do
         package.loaded[m] = nil
       end
       env = { calls = {}, notes = {} }
+      env.orig_select = vim.ui.select
       env.orig_notify = vim.notify
       vim.notify = function(msg, level)
         table.insert(env.notes, { msg = msg, level = level })
@@ -29,6 +31,18 @@ local T = MiniTest.new_set({
       altool.run = function(args, opts, on_exit)
         table.insert(env.calls, { args = args, opts = opts })
         on_exit(env.exit_code or 0, env.lines or {})
+      end
+      -- the target: healthy, nothing installed unless a case says otherwise
+      local server = require("nvim-al.server")
+      env.health = { true, "up" }
+      env.installed = {}
+      env.checks = 0
+      server.check = function(_, _, cb)
+        env.checks = env.checks + 1
+        cb(env.health[1], env.health[2])
+      end
+      server.installed = function(_, _, cb)
+        cb(env.installed, nil)
       end
       env.real = H.fixture("real")
       vim.fn.mkdir(env.real .. "/test/.vscode", "p")
@@ -58,6 +72,7 @@ local T = MiniTest.new_set({
       require("nvim-al").setup({})
     end,
     post_case = function()
+      vim.ui.select = env.orig_select
       require("nvim-al.altool").run = env.orig_run
       vim.notify = env.orig_notify
       vim.env.BC_SERVER_USERNAME, vim.env.BC_SERVER_PASSWORD = env.orig_user, env.orig_pass
@@ -266,6 +281,99 @@ T["symbols failure shows the reason, not the last line"] = function()
   end, env.notes)
   eq(#errs, 1)
   eq(errs[1].msg:find("Connection refused", 1, true) ~= nil, true)
+end
+
+local function stub_build()
+  local build = require("nvim-al.build")
+  env.built = {}
+  build.build = function(bufnr, on_done, opts)
+    local ctx = build.context(bufnr)
+    if opts and opts.folder then
+      ctx.folder = opts.folder
+    end
+    table.insert(env.built, ctx.folder.manifest.name)
+    vim.fn.writefile(
+      {},
+      ctx.folder.path .. "/nvim-al_" .. ctx.folder.manifest.name .. "_1.0.0.0.app"
+    )
+    on_done(true, ctx)
+  end
+end
+
+local function publishes()
+  return vim.tbl_map(
+    function(c)
+      return vim.fs.basename(c.args[2])
+    end,
+    vim.tbl_filter(function(c)
+      return c.args[1] == "publishapp"
+    end, env.calls)
+  )
+end
+
+T["dependencies: missing in-repo dependency is offered and published first"] = function()
+  stub_build()
+  local asked
+  vim.ui.select = function(items, opts, cb)
+    asked = opts.prompt
+    cb(items[1])
+  end
+  vim.cmd("edit " .. env.real .. "/test/src/GadgetTest.Codeunit.al")
+  require("nvim-al.targets").publish(0)
+  eq(asked:find("Real App", 1, true) ~= nil, true)
+  eq(asked:find("on BC yet", 1, true) ~= nil, true) -- the server instance, not the config name
+  eq(env.built, { "Real App", "Real Test" })
+  eq(publishes(), { "nvim-al_Real App_1.0.0.0.app", "nvim-al_Real Test_1.0.0.0.app" })
+end
+
+T["dependencies: declining publishes only the app (server will report what's missing)"] = function()
+  stub_build()
+  vim.ui.select = function(items, _, cb)
+    cb(items[#items])
+  end
+  vim.cmd("edit " .. env.real .. "/test/src/GadgetTest.Codeunit.al")
+  require("nvim-al.targets").publish(0)
+  eq(publishes(), { "nvim-al_Real Test_1.0.0.0.app" })
+end
+
+T["dependencies: installed in the same version are not offered"] = function()
+  stub_build()
+  env.installed =
+    { ["nvim-al|Real App"] = { publisher = "nvim-al", version = "1.0.0.0", installed = true } }
+  local asked = false
+  vim.ui.select = function(items, _, cb)
+    asked = true
+    cb(items[1])
+  end
+  vim.cmd("edit " .. env.real .. "/test/src/GadgetTest.Codeunit.al")
+  require("nvim-al.targets").publish(0)
+  eq(asked, false)
+  eq(publishes(), { "nvim-al_Real Test_1.0.0.0.app" })
+end
+
+T["health: an unreachable target stops before building, with the reason"] = function()
+  stub_build()
+  env.health = { false, "http://localhost:8880/BC is not reachable (connection refused)" }
+  vim.cmd("edit " .. env.real .. "/app/src/GadgetMgt.Codeunit.al")
+  require("nvim-al.targets").publish(0)
+  eq(env.built, {})
+  eq(#env.calls, 0)
+  local errs = vim.tbl_filter(function(n)
+    return n.level == vim.log.levels.ERROR
+  end, env.notes)
+  eq(#errs, 1)
+  eq(errs[1].msg:find("not reachable", 1, true) ~= nil, true)
+  eq(errs[1].msg:find(":AL target", 1, true) ~= nil, true)
+end
+
+T["health: symbols and tests check the target too"] = function()
+  env.health = { false, "down" }
+  vim.cmd("edit " .. env.real .. "/test/src/GadgetTest.Codeunit.al")
+  vim.api.nvim_win_set_cursor(0, { 6, 4 })
+  require("nvim-al.targets").symbols(0)
+  require("nvim-al.targets").test(0)
+  eq(#env.calls, 0)
+  eq(env.checks, 2)
 end
 
 T["hooks short-circuit publish and test"] = function()

@@ -63,6 +63,9 @@ function M.build(bufnr, on_done, opts)
   if not ctx then
     return
   end
+  if opts.folder then
+    ctx.folder = opts.folder -- build another project of the same workspace (publish deps)
+  end
   if ctx.cfg.hooks.build and ctx.cfg.hooks.build(ctx) then
     return
   end
