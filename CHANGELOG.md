@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.1.4
+
+Feedback: every long operation tells you what it is doing and why it failed.
+
+- One progress message per operation, by phase: "Email: building",
+  "compiling FO Base Application", "publishing to main-de", then
+  "published to main-de in 31s". Workspace loading shows too.
+  `require("nvim-al").statusline()` plus the `User NvimAlStatus` event.
+- Failures say why: the server's reason (e.g. a missing dependency) instead
+  of the last output line; full output in `:AL log [op]`.
+- Publish offers in-repo dependencies the target lacks (or has in another
+  version) and publishes them first, in dependency order.
+- Publish, symbols, tests and debugging check the target first: unreachable,
+  wrong instance, rejected credentials are reported before anything is built.
+- Tests: ✓/✗ signs per `[Test]` procedure, failure messages as virtual text;
+  `:AL test file`, `:AL test last`.
+- Files not open in a buffer keep only warnings and errors
+  (`diagnostics.workspace_min_severity`); opening a file shows all of its own.
+- Builds that rewrite tracked files (report layouts, `*.g.xlf`) say which;
+  `:AL restore` puts exactly those back.
+- `:AL debug`: progress from checking to "attached, waiting for a session";
+  launch configurations build first (the adapter's publish of a stale .app
+  failed with "duplicate package ID"); failures show the server's reason
+  instead of "see Visual Studio Code debug console".
+- Fixed: diagnostics published for a bare path with `${workspaceFolder}`
+  raised "URI must contain a scheme".
+- Fixed: nvim-dap reported "Debug adapter didn't respond" while the .NET
+  adapter was still starting (initialize timeout 30s).
+
 ## 0.1.3
 
 - Removed a stray `result` symlink that broke the Nix plugin build.
