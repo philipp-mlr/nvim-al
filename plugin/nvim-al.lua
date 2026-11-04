@@ -5,6 +5,8 @@ vim.g.loaded_nvim_al = true
 
 vim.filetype.add({ extension = { al = "al", dal = "al" } })
 
+require("nvim-al.highlights").setup()
+
 local group = vim.api.nvim_create_augroup("nvim-al", { clear = true })
 
 local function attach(args)

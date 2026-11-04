@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.7
+
+- Colors for the AL server's own semantic token types. Neovim colors only the
+  standard LSP types, so `localVariable`, `otherkeyword`, `builtinfunctions`,
+  `builtintypes`, `langaugeconstant` and the XML doc comment types (about half
+  the tokens in a typical file) showed without a color and hid the treesitter
+  color underneath. They now link to the nearest treesitter group; a
+  colorscheme that defines them wins.
+
 ## 0.1.6
 
 - Workspace symbols (`vim.lsp.buf.workspace_symbol()`, Telescope

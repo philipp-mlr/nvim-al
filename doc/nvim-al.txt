@@ -77,7 +77,14 @@ nor type definitions; nvim-al provides both, so pickers such as Telescope's
   workspace has loaded (~15 s on a large workspace).
 - type definition: from a variable, parameter or field to the object it is
   declared with (`Record Customer` -> table Customer).
-Not available from the server: document highlight and call hierarchy. All other LSP features work through Neovim's defaults
+Not available from the server: document highlight and call hierarchy.
+
+Colors: the server's semantic tokens are layered over treesitter (if you use
+an AL grammar). AL's own token types (localVariable, otherkeyword,
+builtinfunctions, builtintypes, XML doc comments, ...) link to the nearest
+treesitter group, e.g. `@lsp.type.builtinfunctions.al` -> `@function.builtin`.
+Colorschemes that define these groups win. The first tokens arrive once the
+server has loaded the workspace (~15 s on a large one). All other LSP features work through Neovim's defaults
 (|lsp-defaults|).
 
 ==============================================================================
