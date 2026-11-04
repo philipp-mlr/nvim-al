@@ -56,7 +56,7 @@
       packages = forAll (pkgs: {
         default = pkgs.vimUtils.buildVimPlugin {
           pname = "nvim-al";
-          version = "0.1.0";
+          version = "0.1.5";
           src = self;
           # tests and fixtures are not part of the plugin
           postInstall = ''

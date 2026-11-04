@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.5
+
+- `textDocument/declaration` (`gD`, `vim.lsp.buf.declaration()`) goes to the
+  definition. AL has no separate declaration; before, Neovim reported
+  "method textDocument/declaration is not supported".
+- The Nix package carries the real version (was 0.1.0).
+
 ## 0.1.4
 
 Feedback: every long operation tells you what it is doing and why it failed.

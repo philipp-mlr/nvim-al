@@ -67,7 +67,8 @@ defaults work when the extension is installed in VS Code.
     })
 <
 Buffer-local on attach: `gd` (unless you mapped it) and 'tagfunc' use AL go
-to definition. All other LSP features work through Neovim's defaults
+to definition. `textDocument/declaration` (`gD`) goes to the definition too;
+AL has no separate declaration. All other LSP features work through Neovim's defaults
 (|lsp-defaults|).
 
 ==============================================================================

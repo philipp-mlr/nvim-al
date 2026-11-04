@@ -218,6 +218,34 @@ T["fix: textDocument/definition is routed to al/gotodefinition"]["case"] = funct
   eq(vim.api.nvim_buf_get_name(0), vim.env.FAKE_DEF_TARGET)
 end
 
+T["textDocument/declaration goes to the definition (AL has no separate declaration)"] =
+  MiniTest.new_set({
+    hooks = {
+      pre_once = function()
+        next_mode = "file"
+      end,
+    },
+  })
+T["textDocument/declaration goes to the definition (AL has no separate declaration)"]["case"] = function()
+  eq(env.client.server_capabilities.declarationProvider, true)
+  local res = env.client:request_sync(
+    "textDocument/declaration",
+    vim.lsp.util.make_position_params(0, "utf-16"),
+    5000,
+    env.buf
+  )
+  eq(res.result.uri, vim.uri_from_fname(vim.env.FAKE_DEF_TARGET))
+  local sent = vim.tbl_filter(function(m)
+    return m.method == "al/gotodefinition"
+  end, read_log())
+  eq(#sent, 1)
+  vim.lsp.buf.declaration()
+  wait_for(function()
+    return vim.api.nvim_buf_get_name(0) == vim.env.FAKE_DEF_TARGET
+  end)
+  eq(vim.api.nvim_buf_get_name(0), vim.env.FAKE_DEF_TARGET)
+end
+
 T["fix: vim.lsp.buf.definition opens al-preview results"] = MiniTest.new_set({
   hooks = {
     pre_once = function()

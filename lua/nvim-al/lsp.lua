@@ -404,11 +404,16 @@ end
 --- standard request with null), so vim.lsp.buf.definition(), LspAttach `gd`
 --- mappings and pickers all work. Results become standard Locations; .dal file
 --- results are fixed up, al-preview:// URIs open through BufReadCmd.
+--- AL has no declaration separate from the definition: textDocument/declaration
+--- (`gD`) takes the same route instead of "not supported".
+local ROUTED = { ["textDocument/definition"] = true, ["textDocument/declaration"] = true }
+
 local function patch_definition(client)
   client.server_capabilities.definitionProvider = true
+  client.server_capabilities.declarationProvider = true
   local orig = client.request
   client.request = function(self, method, params, handler, bufnr)
-    if method ~= "textDocument/definition" then
+    if not ROUTED[method] then
       return orig(self, method, params, handler, bufnr)
     end
     local body = {
