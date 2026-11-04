@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.2
+
+- Flake: `lib.mkAlExtension pkgs` builds the pinned AL extension with your own
+  nixpkgs (needed when that nixpkgs allows unfree packages).
+
 ## 0.1.1
 
 - `<C-]>` jumps synchronously with a real tag entry, so the tag stack and `:pop` work.

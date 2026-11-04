@@ -39,6 +39,21 @@ require("nvim-al").setup({
 
 Run `:checkhealth nvim-al`.
 
+### Nix
+
+The flake provides the plugin (`packages.<system>.default`) and a pinned AL
+extension. The extension is unfree, so build it with your own nixpkgs, which
+must allow unfree packages:
+
+```nix
+let
+  nvim-al = inputs.nvim-al.packages.${pkgs.stdenv.hostPlatform.system}.default;
+  al-extension = inputs.nvim-al.lib.mkAlExtension pkgs;
+in
+  # plugin: nvim-al; setup: extension_path = "${al-extension}",
+  # dotnet = "${pkgs.dotnetCorePackages.aspnetcore_10_0}/bin/dotnet"
+```
+
 ## How it finds your project
 
 From the current file nvim-al walks up to the git root. The nearest `app.json`

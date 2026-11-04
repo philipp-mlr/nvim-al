@@ -72,6 +72,10 @@
         al-extension = alExtension pkgs;
       });
 
+      # Build the AL extension with your own (unfree-allowing) nixpkgs:
+      #   inputs.nvim-al.lib.mkAlExtension pkgs
+      lib.mkAlExtension = alExtension;
+
       checks = forAll (pkgs: {
         unit = pkgs.runCommand "nvim-al-unit-tests" {
           nativeBuildInputs = [
