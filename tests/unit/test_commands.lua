@@ -27,6 +27,7 @@ T["names and completion"] = function()
   eq(c.complete("", "AL ", 3), c.names())
   eq(c.complete("co", "AL co", 5), { "compile" })
   eq(c.complete("", "AL symbols ", 11), { "global" })
+  eq(c.complete("", "AL test ", 8), { "file", "last" })
 end
 
 T["unknown subcommand lists valid ones"] = function()

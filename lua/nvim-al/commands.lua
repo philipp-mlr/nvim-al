@@ -101,9 +101,14 @@ local subcommands = {
   },
   test = {
     run = function(args)
+      local t = require("nvim-al.targets")
+      if args[1] == "file" or args[1] == "last" then
+        return t.test(cur(), { scope = args[1] })
+      end
       local id = tonumber(args[1])
-      require("nvim-al.targets").test(cur(), id and { codeunit = id, method = args[2] } or nil)
+      t.test(cur(), id and { codeunit = id, method = args[2] } or nil)
     end,
+    complete = { "file", "last" },
   },
   debug = {
     run = function()

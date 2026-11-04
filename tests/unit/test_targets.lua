@@ -120,7 +120,15 @@ T["parse_runtests: real passed output"] = function()
   local r = targets.parse_runtests(text)
   -- altool reports 2 passed: the method plus a codeunit row with an empty
   -- methodName; only real methods are counted
-  eq(r, { passed = 1, failed = 0, skipped = 0, failures = {} })
+  eq(r, {
+    passed = 1,
+    failed = 0,
+    skipped = 0,
+    failures = {},
+    results = {
+      { codeunit = 50633, method = "ReturnFullInvoiceLine", status = "passed", message = "" },
+    },
+  })
 end
 
 T["parse_runtests: failures carry method and message, codeunit summary row skipped"] = function()
@@ -160,7 +168,7 @@ T["test: runs altool with target flags and fills quickfix with failures"] = func
   eq(qf.items[1].lnum, 19)
   eq(qf.items[1].text:find("SecondTest", 1, true) ~= nil, true)
   local summary = env.notes[#env.notes].msg
-  eq(summary, "nvim-al: tests: 1 passed, 1 failed, 0 skipped")
+  eq(summary, "nvim-al: tests: 1 passed, 1 failed, 0 skipped\nfailures in quickfix")
 end
 
 T["publish: build then publishapp with the newest matching .app"] = function()
@@ -374,6 +382,84 @@ T["health: symbols and tests check the target too"] = function()
   require("nvim-al.targets").test(0)
   eq(#env.calls, 0)
   eq(env.checks, 2)
+end
+
+local function marks(buf)
+  local ns = vim.api.nvim_get_namespaces()["nvim-al.tests"]
+  local out = {}
+  for _, m in ipairs(vim.api.nvim_buf_get_extmarks(buf, ns, 0, -1, { details = true })) do
+    local d = m[4]
+    out[#out + 1] = {
+      row = m[2] + 1,
+      sign = d.sign_text and vim.trim(d.sign_text) or nil,
+      text = d.virt_text and d.virt_text[1] and d.virt_text[1][1] or nil,
+    }
+  end
+  table.sort(out, function(a, b)
+    return a.row < b.row
+  end)
+  return out
+end
+
+T["test results: ✓/✗ per method, failure message on the failing line"] = function()
+  local file = env.real .. "/test/src/GadgetTest.Codeunit.al"
+  vim.cmd("edit " .. file)
+  local buf = vim.api.nvim_get_current_buf()
+  vim.api.nvim_win_set_cursor(0, { 21, 4 })
+  env.lines = vim.fn.readfile(H.root .. "/tests/fixtures/runtests/failed.json")
+  env.exit_code = 1
+  require("nvim-al.targets").test(0, { scope = "file" })
+  -- the whole codeunit ran: no --testmethods
+  eq(vim.tbl_contains(env.calls[1].args, "--testmethods"), false)
+  local m = marks(buf)
+  eq(#m, 2)
+  eq(m[1].row, 6) -- DescribeReturnsDescription
+  eq(m[1].sign, "✓")
+  eq(m[2].row, 19) -- SecondTest
+  eq(m[2].sign, "✗")
+  eq(m[2].text:find("Assert.AreEqual failed", 1, true) ~= nil, true)
+end
+
+T["test results: a new run replaces the old marks"] = function()
+  local file = env.real .. "/test/src/GadgetTest.Codeunit.al"
+  vim.cmd("edit " .. file)
+  local buf = vim.api.nvim_get_current_buf()
+  env.lines = vim.fn.readfile(H.root .. "/tests/fixtures/runtests/failed.json")
+  env.exit_code = 1
+  require("nvim-al.targets").test(0, { scope = "file" })
+  env.lines = {
+    vim.json.encode({
+      succeeded = true,
+      data = {
+        passed = 3,
+        failed = 0,
+        skipped = 0,
+        results = {
+          { codeunitId = 50150, methodName = "DescribeReturnsDescription", status = "passed" },
+          { codeunitId = 50150, methodName = "SecondTest", status = "passed" },
+          { codeunitId = 50150, methodName = "", status = "passed" },
+        },
+      },
+    }),
+  }
+  env.exit_code = 0
+  require("nvim-al.targets").test(0, { scope = "file" })
+  local m = marks(buf)
+  eq(#m, 2)
+  eq(m[2].sign, "✓")
+  eq(m[2].text, nil)
+end
+
+T["test last: reruns the previous selection from any buffer"] = function()
+  local file = env.real .. "/test/src/GadgetTest.Codeunit.al"
+  vim.cmd("edit " .. file)
+  vim.api.nvim_win_set_cursor(0, { 21, 4 })
+  env.lines = vim.fn.readfile(H.root .. "/tests/fixtures/runtests/failed.json")
+  require("nvim-al.targets").test(0)
+  vim.cmd("edit " .. env.real .. "/app/src/GadgetMgt.Codeunit.al")
+  require("nvim-al.targets").test(0, { scope = "last" })
+  eq(#env.calls, 2)
+  eq(env.calls[2].args, env.calls[1].args)
 end
 
 T["hooks short-circuit publish and test"] = function()

@@ -344,6 +344,17 @@ function M.parse_runtests(text)
     return nil
   end
   local d = v.data
+  local results = {}
+  for _, r in ipairs(d.results or {}) do
+    if r.methodName and r.methodName ~= "" then
+      results[#results + 1] = {
+        codeunit = r.codeunitId,
+        method = r.methodName,
+        status = r.status,
+        message = r.output or "",
+      }
+    end
+  end
   local failures = {}
   for _, r in ipairs(d.results or {}) do
     if r.status == "failed" and r.methodName and r.methodName ~= "" then
@@ -363,32 +374,96 @@ function M.parse_runtests(text)
     failed = #failures,
     skipped = d.skipped or 0,
     failures = failures,
+    results = results,
   }
 end
 
 --- Run the test method (or codeunit) at the cursor, or the given one.
 ---@param bufnr integer|nil
 ---@param opts? { codeunit?: integer, method?: string }
-function M.test(bufnr, opts)
-  opts = opts or {}
-  local ctx = context(bufnr)
-  if not ctx then
+local TEST_NS = vim.api.nvim_create_namespace("nvim-al.tests")
+
+---@type { file: string, folder: string, test: table }|nil
+local last_test
+
+--- Line of `procedure <name>(` in a buffer (1-based), or nil.
+local function procedure_line(lines, name)
+  for i, l in ipairs(lines) do
+    if l:match('^%s*procedure%s+"?' .. vim.pesc(name) .. '"?%s*%(') then
+      return i
+    end
+  end
+end
+
+--- Show per-method results in the test codeunit's buffer: a ✓/✗ sign on the
+--- procedure line, the failure message as virtual text on failures.
+local function show_results(file, results)
+  local buf = vim.fn.bufnr(file)
+  if buf < 1 or not vim.api.nvim_buf_is_loaded(buf) then
     return
   end
-  local lines = vim.api.nvim_buf_get_lines(ctx.bufnr, 0, -1, false)
-  local at = M.test_at_cursor(lines, vim.api.nvim_win_get_cursor(0)[1])
-  local test = opts.codeunit and { codeunit = opts.codeunit, method = opts.method } or at
-  if not test then
-    return util.notify(
-      "not a test codeunit; pass a codeunit id: :AL test <id> [method]",
-      vim.log.levels.WARN
-    )
+  vim.api.nvim_buf_clear_namespace(buf, TEST_NS, 0, -1)
+  local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+  for _, r in ipairs(results) do
+    local lnum = procedure_line(lines, r.method)
+    if lnum then
+      local ok = r.status == "passed"
+      local opts = {
+        sign_text = ok and "✓" or (r.status == "skipped" and "–" or "✗"),
+        sign_hl_group = ok and "DiagnosticOk" or "DiagnosticError",
+      }
+      if not ok and r.message ~= "" then
+        opts.virt_text = { { "  " .. r.message:gsub("%s+", " "), "DiagnosticVirtualTextError" } }
+      end
+      vim.api.nvim_buf_set_extmark(buf, TEST_NS, lnum - 1, 0, opts)
+    end
+  end
+end
+
+--- Run tests: the [Test] procedure at the cursor (default), the whole codeunit
+--- (scope "file"), the previous run (scope "last"), or an explicit codeunit.
+---@param bufnr integer|nil
+---@param opts? { codeunit?: integer, method?: string, scope?: "file"|"last" }
+function M.test(bufnr, opts)
+  opts = opts or {}
+  local ctx, test, file
+  if opts.scope == "last" then
+    if not last_test then
+      return util.notify("no previous test run", vim.log.levels.WARN)
+    end
+    local name = vim.uri_to_fname(vim.uri_from_fname(last_test.file))
+    ctx = context(vim.fn.bufadd(name))
+    if not ctx then
+      return
+    end
+    test, file = last_test.test, last_test.file
+  else
+    ctx = context(bufnr)
+    if not ctx then
+      return
+    end
+    local lines = vim.api.nvim_buf_get_lines(ctx.bufnr, 0, -1, false)
+    local at = M.test_at_cursor(lines, vim.api.nvim_win_get_cursor(0)[1])
+    if opts.codeunit then
+      test = { codeunit = opts.codeunit, method = opts.method }
+    elseif at and opts.scope == "file" then
+      test = { codeunit = at.codeunit }
+    else
+      test = at
+    end
+    if not test then
+      return util.notify(
+        "not a test codeunit; pass a codeunit id: :AL test <id> [method]",
+        vim.log.levels.WARN
+      )
+    end
+    file = vim.api.nvim_buf_get_name(ctx.bufnr)
   end
   ctx.test = test
   if ctx.cfg.hooks.test and ctx.cfg.hooks.test(ctx) then
     return
   end
-  local file = vim.api.nvim_buf_get_name(ctx.bufnr)
+  last_test = { file = file, test = test }
   with_target(ctx, function(target, env)
     local args = { "runtests", tostring(test.codeunit), "--project", ctx.folder.path }
     if test.method then
@@ -398,7 +473,7 @@ function M.test(bufnr, opts)
     local label = ("%s%s"):format(test.codeunit, test.method and (" " .. test.method) or "")
     run_tool(
       "test",
-      { "AL test", label, "running tests" },
+      { "AL test", label, "running on " .. where(target) },
       args,
       { cwd = ctx.folder.path, env = env },
       function(code, out, p)
@@ -406,32 +481,25 @@ function M.test(bufnr, opts)
         if not r then
           return feedback.fail(p, "test run of " .. label, out, code)
         end
+        show_results(file, r.results)
+        local lines = vim.fn.bufnr(file) > 0
+            and vim.api.nvim_buf_get_lines(vim.fn.bufnr(file), 0, -1, false)
+          or vim.fn.readfile(file)
         local items = {}
         for _, f in ipairs(r.failures) do
-          local lnum = 1
-          for i, l in ipairs(lines) do
-            if l:match('procedure%s+"?' .. vim.pesc(f.method) .. '"?%s*%(') then
-              lnum = i
-            end
-          end
           items[#items + 1] = {
             filename = file,
-            lnum = lnum,
+            lnum = procedure_line(lines, f.method) or 1,
             type = "E",
             text = f.method .. ": " .. f.message,
           }
         end
         vim.fn.setqflist({}, "r", { title = "AL tests", items = items })
-        if #items > 0 then
-          vim.cmd("botright copen")
-        end
-        local summary = ("tests: %d passed, %d failed, %d skipped"):format(
-          r.passed,
-          r.failed,
-          r.skipped
-        )
+        local summary = ("%d passed, %d failed, %d skipped"):format(r.passed, r.failed, r.skipped)
         p:finish(r.failed == 0, summary)
-        util.notify(summary, r.failed > 0 and vim.log.levels.ERROR or vim.log.levels.INFO)
+        if r.failed > 0 then
+          util.notify("tests: " .. summary .. "\nfailures in quickfix", vim.log.levels.ERROR)
+        end
       end
     )
   end)
