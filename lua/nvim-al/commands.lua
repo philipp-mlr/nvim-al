@@ -127,6 +127,12 @@ local subcommands = {
       end)
     end,
   },
+  log = {
+    run = function(args)
+      require("nvim-al.feedback").open(args[1])
+    end,
+    complete = { "build", "compile", "publish", "symbols", "test" },
+  },
   restart = {
     run = function()
       require("nvim-al.lsp").restart_buffer(cur())

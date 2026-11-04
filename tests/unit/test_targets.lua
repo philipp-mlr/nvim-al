@@ -204,6 +204,70 @@ T["fix: :AL target forgets the target and its cached credentials"] = function()
   eq(asked, 2)
 end
 
+T["publish failure shows the server's reason and fills quickfix"] = function()
+  local build = require("nvim-al.build")
+  build.build = function(_, on_done)
+    on_done(true, build.context(0))
+  end
+  local app = env.real .. "/app"
+  vim.fn.writefile({}, app .. "/nvim-al_Real App_1.0.0.0.app")
+  env.exit_code = 1
+  local text = vim.fn.readfile(H.root .. "/tests/fixtures/altool/publish-failed.txt")
+  -- the server reports paths relative to the project: point them at the fixture app
+  env.lines = vim.tbl_map(function(l)
+    return (l:gsub("/repo/apps/BaseApplication/app", app))
+  end, text)
+  vim.cmd("edit " .. app .. "/src/GadgetMgt.Codeunit.al")
+  require("nvim-al.targets").publish(0)
+  local errs = vim.tbl_filter(function(n)
+    return n.level == vim.log.levels.ERROR
+  end, env.notes)
+  eq(#errs, 1)
+  local msg = errs[1].msg
+  -- the reason, not altool's generic last line
+  eq(msg:find("Extension compilation failed", 1, true) ~= nil, true)
+  eq(msg:find("FO Telemetry", 1, true) ~= nil, true)
+  eq(msg:find("Check the output for details", 1, true), nil)
+  -- compiler errors with file and line land in quickfix, AL1024 lines without a file too
+  local qf = vim.fn.getqflist({ items = 0, title = 0 })
+  eq(qf.title, "AL publish")
+  local with_file, al1024 = 0, 0
+  for _, it in ipairs(qf.items) do
+    if it.bufnr > 0 then
+      with_file = with_file + 1
+    end
+    if it.text:find("AL1024", 1, true) then
+      al1024 = al1024 + 1
+    end
+  end
+  eq(with_file, 18)
+  eq(al1024, 2)
+  eq(
+    vim.api.nvim_buf_get_name(vim.fn.getqflist()[3].bufnr),
+    app .. "/src/SalesAPI/ExtractSalesOrderFromText.Codeunit.al"
+  )
+  -- the full output is kept in a log buffer
+  local log = vim.fn.bufnr("nvim-al://publish")
+  eq(log > 0, true)
+  eq(#vim.api.nvim_buf_get_lines(log, 0, -1, false) >= #text, true)
+end
+
+T["symbols failure shows the reason, not the last line"] = function()
+  env.exit_code = 1
+  env.lines = {
+    "Downloading symbols...",
+    "Error: Could not connect to http://localhost:8880/main-de/dev: Connection refused",
+    "Symbol download failed. Check the output for details.",
+  }
+  vim.cmd("edit " .. env.real .. "/app/src/GadgetMgt.Codeunit.al")
+  require("nvim-al.targets").symbols(0)
+  local errs = vim.tbl_filter(function(n)
+    return n.level == vim.log.levels.ERROR
+  end, env.notes)
+  eq(#errs, 1)
+  eq(errs[1].msg:find("Connection refused", 1, true) ~= nil, true)
+end
+
 T["hooks short-circuit publish and test"] = function()
   local seen = {}
   require("nvim-al").setup({

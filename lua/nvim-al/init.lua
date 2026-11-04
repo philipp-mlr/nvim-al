@@ -38,4 +38,33 @@ function M.status(bufnr)
   return out
 end
 
+--- A short statusline string: "AL Email" when ready, "AL Email …" while
+--- loading, plus whatever is running ("Email: publishing to main-de (12s)").
+--- Empty for buffers without an nvim-al client.
+---@param bufnr integer|nil
+---@return string
+function M.statusline(bufnr)
+  bufnr = bufnr or vim.api.nvim_get_current_buf()
+  local s = M.status(bufnr)
+  if not s.workspace then
+    return ""
+  end
+  local lsp = require("nvim-al.lsp")
+  local client = lsp.client_for(bufnr)
+  local st = client and lsp.state(client.id)
+  local name = "AL"
+  if s.folder and st then
+    local f = require("nvim-al.workspace").folder_for(st.ws, s.folder)
+    name = "AL " .. (f and f.name or vim.fs.basename(s.folder))
+  end
+  if not s.loaded then
+    name = name .. " …"
+  end
+  local running = require("nvim-al.feedback").running()
+  if #running > 0 then
+    name = name .. " · " .. running[1]
+  end
+  return name
+end
+
 return M

@@ -472,6 +472,80 @@ T["minor: folders added to the saved workspace file are loaded"] = function()
   eq(last.settings.workspacePath, multi .. "/apps/A/test")
 end
 
+T["publishDiagnostics with a bare path (no URI scheme) does not raise"] = function()
+  vim.env.FAKE_BARE_URI = "1"
+  local errs = {}
+  local orig = vim.schedule
+  vim.schedule = function(fn)
+    return orig(function()
+      local ok, e = pcall(fn)
+      if not ok then
+        table.insert(errs, e)
+      end
+    end)
+  end
+  local multi = H.fixture("multi")
+  open(multi .. "/apps/A/app/src/A_app.Codeunit.al")
+  settle(1)
+  vim.wait(300)
+  vim.schedule = orig
+  vim.env.FAKE_BARE_URI = nil
+  eq(errs, {})
+end
+
+T["workspace loading shows as a progress message and in status()"] = function()
+  vim.env.FAKE_LOAD_PROGRESS = "1"
+  local echos = {}
+  local orig = vim.api.nvim_echo
+  vim.api.nvim_echo = function(chunks, history, opts)
+    if opts and opts.kind == "progress" then
+      table.insert(echos, { text = chunks[1][1], status = opts.status })
+    end
+    return orig(chunks, history, opts)
+  end
+  local multi = H.fixture("multi")
+  local _, buf = open(multi .. "/apps/A/app/src/A_app.Codeunit.al")
+  settle(1)
+  vim.wait(300)
+  vim.api.nvim_echo = orig
+  vim.env.FAKE_LOAD_PROGRESS = nil
+  local texts = vim.tbl_map(function(e)
+    return e.text
+  end, echos)
+  eq(vim.tbl_contains(texts, "A: loading project 'A'"), true)
+  eq(echos[#echos].status, "success")
+  local s = require("nvim-al").status(buf)
+  eq(s.loaded, true)
+  eq(require("nvim-al").statusline(buf):find("AL A", 1, true) ~= nil, true)
+end
+
+T["workspace reload during a build is shown as a build phase, not a second message"] = function()
+  vim.env.FAKE_LOAD_PROGRESS = "1"
+  vim.env.FAKE_DELAY_MS = "300"
+  local multi = H.fixture("multi")
+  local client = open(multi .. "/apps/A/app/src/A_app.Codeunit.al")
+  local fb = require("nvim-al.feedback")
+  local p = fb.progress("AL build", "A", "building")
+  require("nvim-al.build")._active = { client_id = client.id, progress = p, lines = {} }
+  local titles = {}
+  local orig = vim.api.nvim_echo
+  vim.api.nvim_echo = function(chunks, history, opts)
+    if opts and opts.kind == "progress" then
+      table.insert(titles, (opts.title or "") .. "|" .. chunks[1][1])
+    end
+    return orig(chunks, history, opts)
+  end
+  settle(1)
+  vim.wait(300)
+  vim.api.nvim_echo = orig
+  vim.env.FAKE_LOAD_PROGRESS = nil
+  require("nvim-al.build")._active = nil
+  eq(vim.tbl_contains(titles, "AL build|A: loading project 'A'"), true)
+  for _, t in ipairs(titles) do
+    eq(t:match("^AL|") == nil, true)
+  end
+end
+
 T["status reports workspace and folder"] = function()
   local multi = H.fixture("multi")
   local _, buf = open(multi .. "/apps/A/test/src/A_test.Codeunit.al")

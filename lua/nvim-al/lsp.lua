@@ -213,12 +213,50 @@ local function handlers(client_state_of)
       return vim.NIL
     end,
     ["al/progressNotification"] = function(_, result, ctx)
-      if type(result) == "table" then
-        vim.api.nvim_exec_autocmds("User", {
-          pattern = "NvimAlProgress",
-          data = { client_id = ctx.client_id, progress = result },
-          modeline = false,
-        })
+      if type(result) ~= "table" then
+        return
+      end
+      vim.api.nvim_exec_autocmds("User", {
+        pattern = "NvimAlProgress",
+        data = { client_id = ctx.client_id, progress = result },
+        modeline = false,
+      })
+      local st = client_state_of(ctx.client_id)
+      if not st or result.owner ~= 0 then -- 0 = workspace loading (VS Code: OpenWorkspace)
+        return
+      end
+      local feedback = require("nvim-al.feedback")
+      local name = st.active and vim.fs.basename(st.active) or "AL"
+      local folder = st.active and workspace.folder_for(st.ws, st.active)
+      name = folder and folder.name or name
+      if result.percent == 100 or result.cancel then
+        if st.loading then
+          st.loading:finish(
+            not result.cancel,
+            result.cancel and "loading cancelled" or "workspace loaded"
+          )
+          st.loading = nil
+        end
+        st.loaded = true
+        return
+      end
+      local msg = vim.trim((result.message or ""):gsub("%s+", " "))
+      local project = msg:match("^Loading project '([^']+)'")
+      local phase = project and ("loading project '" .. project .. "'")
+        or (msg:match("^Resolving reference closure") and "resolving references")
+        or nil
+      -- a running build/publish owns the message: show the reload as its phase
+      local build = require("nvim-al.build")._active
+      if build and build.client_id == ctx.client_id then
+        if phase then
+          build.progress:phase(phase)
+        end
+        return
+      end
+      if not st.loading then
+        st.loading = feedback.progress("AL", name, phase or "loading workspace")
+      elseif phase then
+        st.loading:phase(phase)
       end
     end,
     ["al/symbolsMissing"] = function()
@@ -230,6 +268,27 @@ local function handlers(client_state_of)
     end,
     ["al/manifestMissing"] = function()
       util.notify_once("manifestMissing", "app.json is missing for a project", vim.log.levels.WARN)
+    end,
+    -- EditorServices sometimes publishes plain paths instead of URIs (e.g. for a
+    -- ruleset path with an unresolved ''${workspaceFolder}''); Neovim raises on those.
+    ["textDocument/publishDiagnostics"] = function(err, result, ctx, config)
+      if type(result) == "table" and type(result.uri) == "string" then
+        local uri = result.uri
+        if not uri:match("^%a[%w+.-]*:") then
+          if uri:find("${", 1, true) then
+            return -- a settings path the server could not resolve: nothing to show
+          end
+          result.uri = vim.uri_from_fname(uri)
+        end
+      end
+      return vim.lsp.handlers["textDocument/publishDiagnostics"](err, result, ctx, config)
+    end,
+    ["window/logMessage"] = function(err, result, ctx, config)
+      require("nvim-al.build").server_log(err, result, ctx)
+      local default = vim.lsp.handlers["window/logMessage"]
+      if default then
+        return default(err, result, ctx, config)
+      end
     end,
     ["al/projectsLoadedNotification"] = function() end,
     ["al/refreshExplorerObjects"] = function() end,

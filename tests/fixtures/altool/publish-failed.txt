@@ -1,0 +1,37 @@
+Publishing AL package...
+MergeFromLaunchJson: Looking for launch.json in project: .
+MergeFromLaunchJson: Found launch.json config: server=http://localhost, instance=main-de, envType=Sandbox, envName=(null), auth=UserPassword
+MergeFromLaunchJson: Incoming params - Environment=Production, EnvironmentName=(null), EnvironmentType=Sandbox, Server=http://localhost, ServerInstance=main-de
+MergeFromLaunchJson: Heuristics - requestLooksCloud=True, hasExplicitOnPremSettings=True
+MergeFromLaunchJson: Applied all launch.json settings (on-prem or explicit settings detected)
+MergeFromLaunchJson: Final params - Server=http://localhost, ServerInstance=main-de, EnvironmentType=Sandbox, Auth=UserPassword
+Publishing /repo/apps/BaseApplication/app/FOND OF Solutions_FO Base Application_28.0.0.0.app (auth=UserPassword)
+Publishing package to tenant 'default'
+Targeting server 'http://localhost', server instance 'main-de' and tenant 'default'.
+Using credentials from environment variables (BC_SERVER_USERNAME=admin)
+Using user name and password authentication. User name used is: 'admin'.
+Sending request to http://localhost:8880/main-de/dev/apps?tenant=default&SchemaUpdateMode=forcesync&DependencyPublishingOption=ignore
+The request for path /main-de/dev/apps?tenant=default&SchemaUpdateMode=forcesync&DependencyPublishingOption=ignore failed with code UnprocessableEntity. Reason: Publishing failed due to 'Extension compilation failed
+error AL1024: A package with publisher 'FOND OF Solutions', name 'FO Telemetry', and a version compatible with '28.0.0.0' could not be loaded. Symbols for the requested app FO Telemetry by FOND OF Solutions 28.0.0.0 could not be found in the database.
+error AL1024: A package with publisher 'FOND OF Solutions', name 'AI Library', and a version compatible with '28.0.0.0' could not be loaded. Symbols for the requested app AI Library by FOND OF Solutions 28.0.0.0 could not be found in the database.
+src/SalesAPI/ExtractSalesOrderFromText.Codeunit.al(3,14): error AL0791: The namespace 'AI' is unknown.
+src/SalesAPI/ExtractSalesOrderFromText.Codeunit.al(12,18): error AL0185: Codeunit 'AI Setup' is missing
+src/Telemetry/AppPerformance/GenJnlPostBatchPerfSig.Codeunit.al(3,14): error AL0791: The namespace 'Telemetry' is unknown.
+src/Telemetry/AppPerformance/GenJnlPostBatchPerfSig.Codeunit.al(3,24): error AL0791: The namespace 'Performance' is unknown.
+src/Telemetry/AppPerformance/IntfCrSOrderPerfSignal.Codeunit.al(4,14): error AL0791: The namespace 'Telemetry' is unknown.
+src/Telemetry/AppPerformance/IntfCrSOrderPerfSignal.Codeunit.al(4,24): error AL0791: The namespace 'Performance' is unknown.
+src/Telemetry/AppPerformance/SalesPostPerfSignal.Codeunit.al(3,14): error AL0791: The namespace 'Telemetry' is unknown.
+src/Telemetry/AppPerformance/SalesPostPerfSignal.Codeunit.al(3,24): error AL0791: The namespace 'Performance' is unknown.
+src/Telemetry/AppPerformance/WorkflowPerfSignal.Codeunit.al(4,14): error AL0791: The namespace 'Telemetry' is unknown.
+src/Telemetry/AppPerformance/WorkflowPerfSignal.Codeunit.al(4,24): error AL0791: The namespace 'Performance' is unknown.
+src/Telemetry/AppPerformance/GenJnlPostBatchPerfSig.Codeunit.al(18,31): error AL0185: Codeunit 'App Performance Signal' is missing
+src/Telemetry/AppPerformance/IntfCrSOrderPerfSignal.Codeunit.al(13,31): error AL0185: Codeunit 'App Performance Signal' is missing
+src/Telemetry/AppPerformance/SalesPostPerfSignal.Codeunit.al(16,31): error AL0185: Codeunit 'App Performance Signal' is missing
+src/Telemetry/AppPerformance/WorkflowPerfSignal.Codeunit.al(16,31): error AL0185: Codeunit 'App Performance Signal' is missing
+src/SalesCommentCopilot/AnalyzeSalesHeaderComments.Codeunit.al(3,14): error AL0791: The namespace 'AI' is unknown.
+src/SalesCommentCopilot/Actions/Discount.Codeunit.al(3,14): error AL0791: The namespace 'AI' is unknown.
+src/SalesCommentCopilot/Actions/Discount.Codeunit.al(46,18): error AL0185: Codeunit 'AI Setup' is missing
+src/SalesCommentCopilot/AnalyzeSalesHeaderComments.Codeunit.al(50,18): error AL0185: Codeunit 'AI Setup' is missing'. The original extensions have been restored.
+
+
+Publish failed: Publish operation failed. Check the output for details.

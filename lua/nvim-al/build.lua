@@ -1,6 +1,7 @@
 -- :AL build (the server's own build of the active project) and
 -- :AL compile (altool workspace compile over all folders).
 local altool = require("nvim-al.altool")
+local feedback = require("nvim-al.feedback")
 local quickfix = require("nvim-al.quickfix")
 local settings = require("nvim-al.settings")
 local toolchain = require("nvim-al.toolchain")
@@ -55,7 +56,9 @@ M._save_project_buffers = save_project_buffers
 --- Build the project of the buffer with the language server (al/createPackage).
 ---@param bufnr integer|nil
 ---@param on_done? fun(ok: boolean, ctx: table)
-function M.build(bufnr, on_done)
+---@param opts? { progress?: nvim_al.Progress } continue an existing progress (publish)
+function M.build(bufnr, on_done, opts)
+  opts = opts or {}
   local ctx = M.context(bufnr)
   if not ctx then
     return
@@ -71,6 +74,11 @@ function M.build(bufnr, on_done)
   save_project_buffers(ctx.folder)
   local nvim_al = require("nvim-al")
   nvim_al._building = true
+  local owned = opts.progress == nil
+  local p = opts.progress or feedback.progress("AL build", ctx.folder.name, "building")
+  p:phase("building")
+  feedback.log("build", {})
+  M._active = { client_id = client.id, progress = p, lines = {} }
   client:request("al/createPackage", {
     projectDir = ctx.folder.path,
     args = { '-project:"' .. ctx.folder.path .. '"' },
@@ -79,19 +87,56 @@ function M.build(bufnr, on_done)
     forceBuildDependencies = false,
   }, function(err, result)
     nvim_al._building = false
+    local active = M._active or { lines = {} }
+    M._active = nil
     local ok = not err and type(result) == "table" and result.success == true
     if ok then
-      util.notify("built " .. ctx.folder.name)
+      if owned then
+        p:finish(true, "built")
+      end
     else
-      util.notify("build of " .. ctx.folder.name .. " failed", vim.log.levels.ERROR)
-      vim.defer_fn(function()
-        vim.diagnostic.setqflist({ severity = vim.diagnostic.severity.ERROR, title = "AL build" })
-      end, 300)
+      -- compiler errors as the server logged them (absolute paths)
+      local items = vim.tbl_filter(function(it)
+        return it.type == "E"
+      end, quickfix.from_compiler_lines(active.lines, ctx.folder.path))
+      vim.fn.setqflist({}, "r", { title = "AL build", items = items })
+      local reasons = vim.tbl_map(function(it)
+        return it.text
+      end, items)
+      if err then
+        table.insert(reasons, 1, "Error: " .. (err.message or vim.inspect(err)))
+      end
+      local lines = vim.list_extend(
+        vim.tbl_map(function(r)
+          return r:match("^%u+%d+:") and ("error " .. r) or r
+        end, reasons),
+        active.lines
+      )
+      feedback.fail(p, "build of " .. ctx.folder.name, lines, 1, #items)
     end
     if on_done then
       on_done(ok, ctx)
     end
   end, ctx.bufnr)
+end
+
+--- window/logMessage from the language server: during :AL build these carry
+--- the compiler output. Shown as progress and kept in the build log.
+function M.server_log(_, result, ctx)
+  local a = M._active
+  if not (a and ctx and ctx.client_id == a.client_id and type(result) == "table") then
+    return
+  end
+  local line = (result.message or ""):gsub("\r", "")
+  a.lines[#a.lines + 1] = line
+  feedback.append("build", line)
+  -- phases only; individual diagnostics are not progress
+  local project = line:match("^Compilation started for project '([^']+)'")
+  if project then
+    a.progress:phase("compiling " .. project)
+  elseif line:match("^Creating package") or line:match("Success: The package is created") then
+    a.progress:phase("creating package")
+  end
 end
 
 local function rewrite_analyzer(a, dir)
@@ -201,33 +246,6 @@ function M.compile_args(ws, c, file)
   return args, differing, tmp
 end
 
-local log_buf
-
-local function log_line(line)
-  if not (log_buf and vim.api.nvim_buf_is_valid(log_buf)) then
-    return
-  end
-  vim.bo[log_buf].modifiable = true
-  vim.api.nvim_buf_set_lines(log_buf, -1, -1, false, { line })
-  vim.bo[log_buf].modifiable = false
-end
-
-local function open_log(show)
-  if not (log_buf and vim.api.nvim_buf_is_valid(log_buf)) then
-    log_buf = vim.api.nvim_create_buf(false, true)
-    vim.api.nvim_buf_set_name(log_buf, "nvim-al://compile")
-    vim.bo[log_buf].bufhidden = "hide"
-  end
-  vim.bo[log_buf].modifiable = true
-  vim.api.nvim_buf_set_lines(log_buf, 0, -1, false, {})
-  vim.bo[log_buf].modifiable = false
-  if show then
-    vim.cmd("botright split")
-    vim.api.nvim_win_set_buf(0, log_buf)
-    vim.cmd("wincmd p")
-  end
-end
-
 --- Compile every folder of the buffer's workspace with altool.
 ---@param bufnr integer|nil
 ---@param opts? { show_log?: boolean }
@@ -257,11 +275,46 @@ function M.compile(bufnr, opts)
   for _, f in ipairs(ws.folders) do
     save_project_buffers(f)
   end
-  open_log(opts.show_log)
+  feedback.log("compile", { "$ altool " .. table.concat(args, " "), "" })
+  if opts.show_log then
+    feedback.open("compile")
+    vim.cmd("wincmd p")
+  end
   local nvim_al = require("nvim-al")
   nvim_al._building = true
-  util.notify(("compiling %d project(s)…"):format(#ws.folders))
-  altool.run(args, { cwd = ws.folders[1].path, on_line = log_line }, function(code)
+  local total = 0
+  for _, f in ipairs(ws.folders) do
+    if f.manifest then
+      total = total + 1
+    end
+  end
+  local p = feedback.progress(
+    "AL compile",
+    vim.fs.basename(ws.file or ws.key),
+    ("compiling %d project(s)"):format(total)
+  )
+  -- altool prints nothing per project while it works; count the per-project
+  -- logs it writes to show how far it is
+  local timer = vim.uv.new_timer()
+  timer:start(
+    1000,
+    1000,
+    vim.schedule_wrap(function()
+      local done = math.min(#vim.fn.glob(tmp .. "/logs/*.log", false, true), total)
+      p:phase(
+        ("compiling: %d/%d project(s) done"):format(done, total),
+        total > 0 and math.floor(done * 100 / total) or nil
+      )
+    end)
+  )
+  altool.run(args, {
+    cwd = ws.folders[1].path,
+    on_line = function(line)
+      feedback.append("compile", line)
+    end,
+  }, function(code, lines)
+    timer:stop()
+    timer:close()
     nvim_al._building = false
     local items = {}
     for _, log in ipairs(vim.fn.glob(tmp .. "/err/*.errorLog.json", false, true)) do
@@ -275,15 +328,19 @@ function M.compile(bufnr, opts)
     if n.E > 0 then
       vim.cmd("botright copen")
     end
-    util.notify(
-      ("compile %s: %d projects, %d error(s), %d warning(s)"):format(
-        code == 0 and "succeeded" or "failed",
-        #ws.folders,
-        n.E,
-        n.W
-      ),
-      (code == 0 and n.E == 0) and vim.log.levels.INFO or vim.log.levels.ERROR
-    )
+    local summary = ("%d project(s), %d error(s), %d warning(s)"):format(total, n.E, n.W)
+    if code == 0 and n.E == 0 then
+      p:finish(true, "compiled " .. summary)
+    elseif n.E > 0 then
+      p:finish(false, "compile failed: " .. summary)
+      util.notify(
+        "compile failed: " .. summary .. "\nerrors in quickfix, :AL log for the full output",
+        vim.log.levels.ERROR
+      )
+    else
+      -- failed without error logs (e.g. altool itself could not start)
+      feedback.fail(p, "compile", lines, code)
+    end
   end)
 end
 

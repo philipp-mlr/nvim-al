@@ -133,6 +133,59 @@ T["compile: error logs fill quickfix"] = function()
   eq(summary:find("1 error", 1, true) ~= nil, true)
 end
 
+T["build: compiler log lines become progress, log buffer and quickfix"] = function()
+  vim.cmd("edit " .. env.multi .. "/apps/A/app/src/A_app.Codeunit.al")
+  local buf = vim.api.nvim_get_current_buf()
+  local mgt = env.multi .. "/apps/A/app/src/A_app.Codeunit.al"
+  -- a fake client: createPackage answers after the server "logged" compiler output
+  local handlers = {}
+  local client = {
+    id = 4242,
+    request = function(_, method, _, cb)
+      if method == "al/createPackage" then
+        local h = handlers["window/logMessage"]
+        for _, m in ipairs({
+          "Microsoft (R) AL Compiler version 30.0.43.45776",
+          "Compilation started for project 'A' containing '3' files at '10:21:00.126'.",
+          mgt .. "(3,5): error AL0118: The name 'X' does not exist in the current context.",
+          mgt .. "(1,1): info AA0247: Use namespaces to organize your code.",
+          "Compilation ended at '10:21:04.000'.",
+        }) do
+          h(nil, { type = 4, message = m }, { client_id = 4242 })
+        end
+        cb(nil, { success = false })
+      end
+    end,
+  }
+  local lsp = require("nvim-al.lsp")
+  local orig_client_for = lsp.client_for
+  lsp.client_for = function()
+    return client
+  end
+  handlers["window/logMessage"] = require("nvim-al.build").server_log
+  local done
+  require("nvim-al.build").build(buf, function(ok)
+    done = ok
+  end)
+  vim.wait(1000, function()
+    return done ~= nil
+  end)
+  lsp.client_for = orig_client_for
+  eq(done, false)
+  local qf = vim.fn.getqflist({ items = 0, title = 0 })
+  eq(qf.title, "AL build")
+  eq(#qf.items, 1)
+  eq(qf.items[1].lnum, 3)
+  eq(qf.items[1].text, "AL0118: The name 'X' does not exist in the current context.")
+  local log = vim.fn.bufnr("nvim-al://build")
+  eq(log > 0, true)
+  eq(#vim.api.nvim_buf_get_lines(log, 0, -1, false) >= 5, true)
+  local errs = vim.tbl_filter(function(n)
+    return n.level == vim.log.levels.ERROR
+  end, env.notes)
+  eq(errs[#errs].msg:find("AL0118", 1, true) ~= nil, true)
+end
+
 T["compile hook short-circuits"] = function()
   local got
   require("nvim-al").setup({

@@ -1,6 +1,8 @@
 -- :AL publish, :AL symbols, :AL test: altool against the project's target,
 -- with connection flags passed explicitly and credentials via the environment.
 local altool = require("nvim-al.altool")
+local feedback = require("nvim-al.feedback")
+local quickfix = require("nvim-al.quickfix")
 local credentials = require("nvim-al.credentials")
 local launch = require("nvim-al.launch")
 local util = require("nvim-al.util")
@@ -23,6 +25,42 @@ local function with_target(ctx, fn)
       end
       fn(target, env)
     end)
+  end)
+end
+
+--- altool output lines that mark a phase worth showing.
+local PHASES = {
+  { "^Sending request to .*/dev/apps", "uploading" },
+  { "^Downloading symbols", "downloading symbols" },
+  { "^Running tests", "running tests" },
+  { "^Authenticat", "authenticating" },
+}
+
+--- Run altool for `op` with progress phases and a log buffer.
+--- `p` is an existing progress (publish continues the build's) or a
+--- {title, subject, phase} spec for a new one. on_done(code, lines, p).
+local function run_tool(op, p, args, opts, on_done)
+  if getmetatable(p) == nil then
+    p = feedback.progress(p[1], p[2], p[3])
+  end
+  feedback.log(op, { "$ altool " .. table.concat(args, " "), "" })
+  opts = vim.tbl_extend("force", opts, {
+    on_line = function(line)
+      feedback.append(op, line)
+      for _, ph in ipairs(PHASES) do
+        if line:match(ph[1]) then
+          p:phase(ph[2])
+        end
+      end
+    end,
+  })
+  local header = { "$ altool " .. table.concat(args, " "), "" }
+  altool.run(args, opts, function(code, lines)
+    -- the complete output (stdout and stderr) replaces the streamed lines
+    feedback.log(op, vim.list_extend(vim.list_extend({}, header), lines))
+    feedback.append(op, "")
+    feedback.append(op, "[exit code " .. tostring(code) .. "]")
+    on_done(code, lines, p)
   end)
 end
 
@@ -73,30 +111,39 @@ function M.publish(bufnr)
   if ctx.cfg.hooks.publish and ctx.cfg.hooks.publish(ctx) then
     return
   end
+  local name = ctx.folder.name
+  local p = feedback.progress("AL publish", name, "building")
   require("nvim-al.build").build(ctx.bufnr, function(ok)
     if not ok then
-      return
+      return -- build reported the failure on this progress
     end
     local app = newest_app(ctx)
     if not app then
-      return util.notify("no .app found for " .. ctx.folder.name, vim.log.levels.ERROR)
+      p:finish(false, "publish failed")
+      return util.notify("no .app found for " .. name, vim.log.levels.ERROR)
     end
     with_target(ctx, function(target, env)
       local args = { "publishapp", app, "--project", ctx.folder.path }
       vim.list_extend(args, launch.altool_flags(target))
-      util.notify(("publishing %s to %s…"):format(vim.fs.basename(app), target.name))
-      altool.run(args, { cwd = ctx.folder.path, env = env }, function(code, lines)
+      p:phase("publishing to " .. target.name)
+      run_tool("publish", p, args, { cwd = ctx.folder.path, env = env }, function(code, lines)
         if code == 0 then
-          util.notify("published " .. vim.fs.basename(app))
-        else
-          util.notify(
-            "publish failed: " .. (lines[#lines] or ("exit code " .. code)),
-            vim.log.levels.ERROR
-          )
+          p:finish(true, "published to " .. target.name)
+          return
         end
+        -- server-side compile errors are relative to the project folder
+        local items = quickfix.from_compiler_lines(lines, ctx.folder.path)
+        for _, r in ipairs(feedback.reasons(lines)) do
+          if r:match("^error %u+%d+:") then
+            local code_, text = r:match("^error (%u+%d+):%s*(.*)$")
+            table.insert(items, 1, { type = "E", text = code_ .. ": " .. text })
+          end
+        end
+        vim.fn.setqflist({}, "r", { title = "AL publish", items = items })
+        feedback.fail(p, "publish of " .. name, lines, code, #items)
       end)
     end)
-  end)
+  end, { progress = p })
 end
 
 --- Download symbols for the project, then make the server reload them.
@@ -115,21 +162,27 @@ function M.symbols(bufnr, opts)
     else
       vim.list_extend(args, launch.altool_flags(target))
     end
-    util.notify("downloading symbols for " .. ctx.folder.name .. "…")
-    altool.run(args, { cwd = ctx.folder.path, env = env }, function(code, lines)
-      if code ~= 0 then
-        return util.notify(
-          "symbol download failed: " .. (lines[#lines] or ("exit code " .. code)),
-          vim.log.levels.ERROR
-        )
+    run_tool(
+      "symbols",
+      {
+        "AL symbols",
+        ctx.folder.name,
+        opts.global and "downloading from NuGet" or "downloading symbols",
+      },
+      args,
+      { cwd = ctx.folder.path, env = env },
+      function(code, lines, p)
+        if code ~= 0 then
+          return feedback.fail(p, "symbol download for " .. ctx.folder.name, lines, code)
+        end
+        p:finish(true, "symbols downloaded")
+        local lsp = require("nvim-al.lsp")
+        local client = lsp.client_for(ctx.bufnr)
+        if client then
+          lsp.switch(client, ctx.folder, { force = true })
+        end
       end
-      util.notify("symbols downloaded for " .. ctx.folder.name)
-      local lsp = require("nvim-al.lsp")
-      local client = lsp.client_for(ctx.bufnr)
-      if client then
-        lsp.switch(client, ctx.folder, { force = true })
-      end
-    end)
+    )
   end
   if opts.global then
     return run(nil, {})
@@ -239,41 +292,45 @@ function M.test(bufnr, opts)
       vim.list_extend(args, { "--testmethods", test.method })
     end
     vim.list_extend(args, launch.altool_flags(target))
-    util.notify(
-      ("running %s%s…"):format(test.codeunit, test.method and (" " .. test.method) or "")
-    )
-    altool.run(args, { cwd = ctx.folder.path, env = env }, function(code, out)
-      local r = M.parse_runtests(table.concat(out, "\n"))
-      if not r then
-        return util.notify(
-          "test run failed: " .. (out[#out] or ("exit code " .. code)),
-          vim.log.levels.ERROR
-        )
-      end
-      local items = {}
-      for _, f in ipairs(r.failures) do
-        local lnum = 1
-        for i, l in ipairs(lines) do
-          if l:match('procedure%s+"?' .. vim.pesc(f.method) .. '"?%s*%(') then
-            lnum = i
-          end
+    local label = ("%s%s"):format(test.codeunit, test.method and (" " .. test.method) or "")
+    run_tool(
+      "test",
+      { "AL test", label, "running tests" },
+      args,
+      { cwd = ctx.folder.path, env = env },
+      function(code, out, p)
+        local r = M.parse_runtests(table.concat(out, "\n"))
+        if not r then
+          return feedback.fail(p, "test run of " .. label, out, code)
         end
-        items[#items + 1] = {
-          filename = file,
-          lnum = lnum,
-          type = "E",
-          text = f.method .. ": " .. f.message,
-        }
+        local items = {}
+        for _, f in ipairs(r.failures) do
+          local lnum = 1
+          for i, l in ipairs(lines) do
+            if l:match('procedure%s+"?' .. vim.pesc(f.method) .. '"?%s*%(') then
+              lnum = i
+            end
+          end
+          items[#items + 1] = {
+            filename = file,
+            lnum = lnum,
+            type = "E",
+            text = f.method .. ": " .. f.message,
+          }
+        end
+        vim.fn.setqflist({}, "r", { title = "AL tests", items = items })
+        if #items > 0 then
+          vim.cmd("botright copen")
+        end
+        local summary = ("tests: %d passed, %d failed, %d skipped"):format(
+          r.passed,
+          r.failed,
+          r.skipped
+        )
+        p:finish(r.failed == 0, summary)
+        util.notify(summary, r.failed > 0 and vim.log.levels.ERROR or vim.log.levels.INFO)
       end
-      vim.fn.setqflist({}, "r", { title = "AL tests", items = items })
-      if #items > 0 then
-        vim.cmd("botright copen")
-      end
-      util.notify(
-        ("tests: %d passed, %d failed, %d skipped"):format(r.passed, r.failed, r.skipped),
-        r.failed > 0 and vim.log.levels.ERROR or vim.log.levels.INFO
-      )
-    end)
+    )
   end)
 end
 

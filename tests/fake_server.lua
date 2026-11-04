@@ -63,6 +63,31 @@ local function handle(msg)
   elseif m == "al/setActiveWorkspace" then
     vim.defer_fn(function()
       send({ jsonrpc = "2.0", id = msg.id, result = { success = true } })
+      if os.getenv("FAKE_LOAD_PROGRESS") == "1" then
+        for _, m in ipairs({
+          "Loading project 'A' ... \r\n    ",
+          "Resolving reference closure ... \r\n",
+        }) do
+          send({
+            jsonrpc = "2.0",
+            method = "al/progressNotification",
+            params = { owner = 0, percent = 0, message = m, cancel = false },
+          })
+        end
+        send({
+          jsonrpc = "2.0",
+          method = "al/progressNotification",
+          params = { owner = 0, percent = 100, message = "", cancel = false },
+        })
+      end
+      if os.getenv("FAKE_BARE_URI") == "1" then
+        -- what EditorServices does for an unresolved ruleset path: no scheme
+        send({
+          jsonrpc = "2.0",
+          method = "textDocument/publishDiagnostics",
+          params = { uri = "/x/app/${workspaceFolder}/../ruleset.json", diagnostics = {} },
+        })
+      end
       if ask_loaded and not asked then
         asked = true
         server_req_id = server_req_id + 1
