@@ -67,12 +67,14 @@ exactly as VS Code reads them. Worktrees work out of the box.
 | Command | |
 |---|---|
 | `:AL info` | toolchain, workspace, closure, effective settings |
-| `:AL build` | build the current project |
+| `:AL build` | build the current project; tells you which tracked files the build rewrote |
+| `:AL restore` | put back the tracked files the last build rewrote |
 | `:AL compile[!]` | compile the whole workspace (altool), results in quickfix |
-| `:AL publish` | build and publish to the target |
+| `:AL publish` | build and publish to the target; offers in-repo dependencies the target lacks |
 | `:AL symbols [global]` | download symbols from the target or NuGet |
-| `:AL test [id [method]]` | run the test at the cursor |
-| `:AL debug` | debug with nvim-dap |
+| `:AL test [id [method]\|file\|last]` | run tests; ✓/✗ signs and failure messages in the buffer |
+| `:AL debug` | debug with nvim-dap (builds first for launch configurations) |
+| `:AL log [op]` | output of the last build, compile, publish, symbols, test or debug run |
 | `:AL target` | choose the launch configuration again |
 | `:AL restart` | restart the language server |
 

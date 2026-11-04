@@ -185,9 +185,24 @@ Example: route the workspace compile to a repository script.
 ==============================================================================
 8. STATUSLINE                                             *nvim-al-statusline*
 
-`require("nvim-al").status(bufnr)` returns
-`{ workspace, folder, loaded, building }`. Server progress arrives as the
-User event `NvimAlProgress` with `data.progress`.
+`require("nvim-al").statusline(bufnr)` returns a ready string such as
+"AL Email", "AL Email …" while the workspace loads, or
+"AL Email · Email: publishing to main-de (12s)" while an operation runs.
+Redraw on the User event `NvimAlStatus`, fired on every change: >lua
+
+    vim.o.statusline = "%f %{v:lua.require'nvim-al'.statusline()}"
+    vim.api.nvim_create_autocmd("User", {
+      pattern = "NvimAlStatus",
+      command = "redrawstatus",
+    })
+<
+For your own rendering, `require("nvim-al").status(bufnr)` returns
+`{ workspace, folder, loaded, building }` and
+`require("nvim-al.feedback").running()` the running operations. Raw server
+progress also arrives as the User event `NvimAlProgress` (`data.progress`).
+
+Progress uses Neovim's progress messages (`nvim_echo` with kind "progress"),
+so UIs that show LspProgress-style messages pick them up.
 
 ==============================================================================
 9. TROUBLESHOOTING                                   *nvim-al-troubleshooting*
