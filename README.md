@@ -279,6 +279,26 @@ Integration tests start the real language server. They run when
 `NVIM_AL_TEST_PACKAGES` at a folder of symbol packages. Changes go in
 [`CHANGELOG.md`](CHANGELOG.md).
 
+## Credits
+
+nvim-al builds on other people's work:
+
+- [al.nvim](https://github.com/abonckus/al.nvim) by abonckus showed how to
+  build a project's reference closure from `app.json`. nvim-al's closure logic
+  started there.
+- [ALNvim](https://github.com/drs76/ALNvim) by drs76 collected the language
+  server's quirks and the robustness lessons that came with them.
+- Microsoft's [AL Language extension](https://marketplace.visualstudio.com/items?itemName=ms-dynamics-smb.al)
+  provides the language server, compiler, analyzers and debug adapter that
+  nvim-al runs. Its behaviour in VS Code is the reference for everything here.
+- [tree-sitter-al](https://github.com/SShadowS/tree-sitter-al) by SShadowS
+  colors AL before the language server is ready.
+- [ALCops](https://github.com/ALCops/Analyzers) is the third-party analyzer
+  suite nvim-al was tested against.
+- [mini.test](https://github.com/nvim-mini/mini.nvim) runs the test suite, and
+  [VHS](https://github.com/charmbracelet/vhs) recorded the screenshots and the
+  demo.
+
 ## License
 
 [MIT](LICENSE). AL Language, Business Central and Dynamics 365 are trademarks
